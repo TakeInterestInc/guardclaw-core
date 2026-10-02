@@ -25,6 +25,11 @@ type Engine struct {
 	entropy  *EntropyAnalyzer
 	resource *ResourceAccountant
 	ready    bool
+	// selfProtect holds the self-protection patterns present in the pattern
+	// set, keyed by name. security.MatchSelfProtection runs alongside Tier 3
+	// only for names in this map, so an engine built from a custom pattern
+	// set without them behaves as before.
+	selfProtect map[string]security.ExportedPattern
 
 	// Atomic counters for stats.
 	totalScans    atomic.Int64
@@ -123,6 +128,7 @@ func NewEngine(cfg *EngineConfig) (*Engine, error) {
 
 	// Tier 3: Composite RE2.
 	e.re2 = NewCompositeRE2(patterns, maxGroup)
+	e.selfProtect = selfProtectPatterns(patterns)
 
 	// Tier 4: Entropy analyzer.
 	ea := NewEntropyAnalyzer()
@@ -311,7 +317,25 @@ func (e *Engine) Scan(input string) ScanResult {
 	}
 
 	// Tier 3: Composite RE2 (regex scan).
-	if matches := e.re2.Scan(normalized); len(matches) > 0 {
+	matches := e.re2.Scan(normalized)
+	if len(e.selfProtect) > 0 {
+		if name, ok := security.MatchSelfProtection(normalized); ok {
+			p, known := e.selfProtect[name]
+			seen := false
+			for _, m := range matches {
+				if m.PatternID == name {
+					seen = true
+				}
+			}
+			if known && !seen {
+				matches = append(matches, CompositeMatch{
+					PatternID: name, Domain: p.Domain, Category: p.Category,
+					Severity: p.Severity, Confidence: p.Confidence, GroupID: -1,
+				})
+			}
+		}
+	}
+	if len(matches) > 0 {
 		best := matches[0]
 		for _, m := range matches[1:] {
 			if m.Severity > best.Severity {
@@ -390,6 +414,22 @@ func (e *Engine) Rebuild(patterns []security.ExportedPattern) {
 		}
 	}
 	e.re2.Rebuild(patterns)
+	e.selfProtect = selfProtectPatterns(patterns)
+}
+
+// selfProtectPatterns returns the self-protection patterns in a pattern set.
+func selfProtectPatterns(patterns []security.ExportedPattern) map[string]security.ExportedPattern {
+	names := map[string]bool{}
+	for _, n := range security.SelfProtectionPatternNames() {
+		names[n] = true
+	}
+	out := map[string]security.ExportedPattern{}
+	for _, p := range patterns {
+		if names[p.Name] {
+			out[p.Name] = p
+		}
+	}
+	return out
 }
 
 // Ready returns true if all tiers initialized successfully.

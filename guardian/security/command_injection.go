@@ -138,17 +138,15 @@ var CommandInjectionPatterns = []CommandInjectionPattern{
 	{regexp.MustCompile(`(?i)init\s+0`), CmdCategoryDestructive, 0.9, 0.90, "init_0", "init 0"},
 	{regexp.MustCompile(`(?i)halt`), CmdCategoryDestructive, 0.8, 0.85, "halt", "halt"},
 	// Self-protection: attempts to stop, unload, delete or kill a
-	// GuardClaw/Guardian service or process. These are text patterns over one
-	// command string. They catch the common spellings: flags before the unit
-	// name, launchctl remove/bootout, rm/mv of the service file, kill by a PID
-	// looked up with pgrep in the same command, shell quoting or escaping spliced
-	// into the name (guard\claw, g"u"ardclaw), and wildcard or regex targets
-	// (guard[c]law, guardcl.w, uardclaw, guard*). They miss anything that hides
-	// the name: a variable, a script file, a PID typed as a number, a wildcard
-	// spanning several letters (g.*w), another tool. A daemon that must survive
-	// a hostile agent needs OS-level protection (run it as a user the agent
-	// cannot signal, under a supervisor that restarts it) and must not rely on
-	// these patterns alone. See guardServiceName and guardProcessTarget.
+	// GuardClaw/Guardian service or process. These regexes match the guard's
+	// full names (with quotes, a backslash or a one-character wildcard spliced
+	// in) inside one command. MatchSelfProtection (self_protection.go) runs
+	// after them in CheckCommandInjection and in the tiered engine and reports
+	// under the same names: it splits commands the way a shell does, respects
+	// quotes, and reads pkill/pgrep targets as regexes. Both are text checks; a
+	// daemon that must survive a hostile agent needs OS-level protection (run it
+	// as a user the agent cannot signal, under a supervisor that restarts it)
+	// and must not rely on them alone.
 	{regexp.MustCompile(selfProtectServicePattern()), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_service_stop", "systemctl stop guardclaw"},
 	{regexp.MustCompile(selfProtectLaunchdPattern()), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_launchctl_disable", "launchctl unload /Library/LaunchDaemons/com.guardclaw.daemon.plist"},
 	{regexp.MustCompile(selfProtectKillPattern()), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_process_kill", "pkill guardclaw"},
@@ -384,6 +382,19 @@ func CheckCommandInjection(input string) *CommandInjectionResult {
 		}
 	}
 
+	// Shell-aware self-protection check (quotes, regex targets). Reports under
+	// the matching regex pattern's name.
+	if bestMatch == nil || bestMatch.Severity < 1.0 {
+		if name, ok := MatchSelfProtection(input); ok {
+			for i := range CommandInjectionPatterns {
+				if CommandInjectionPatterns[i].Name == name {
+					bestMatch = &CommandInjectionPatterns[i]
+					break
+				}
+			}
+		}
+	}
+
 	if bestMatch != nil {
 		result.Detected = true
 		result.Score = bestMatch.Severity
@@ -478,37 +489,22 @@ func guardServiceName() string {
 			alts = append(alts, guardSeq(w[:n])+`['"]*\*`)
 		}
 	}
-	return `(?:` + strings.Join(alts, "|") + `)`
+	return guardBoundary + `(?:` + strings.Join(alts, "|") + `)`
 }
 
-// guardProcessTarget matches a pkill/killall/pgrep target that could select a
-// guard process. pkill -f and pgrep -f read the target as a regex matched
-// anywhere in the command line, so a fragment is enough: any five-letter
-// window of a guard name (guard, uardc, dclaw, rdian...) in any guardNameChar
-// spelling, or a three-letter window next to a .* / .+ / * wildcard. This is
-// an approximation of "could this regex match guardclaw"; a pattern check
-// cannot evaluate the target as a regex.
-func guardProcessTarget() string {
-	seen := map[string]bool{}
+// guardBoundary keeps a guard name from matching inside a longer word
+// (safeguardian, vanguard).
+const guardBoundary = `\b`
+
+// guardProcessName matches a guard's full process name in any guardNameChar
+// spelling. Regex targets that only partly spell a name are judged by
+// MatchSelfProtection, which evaluates them as regexes.
+func guardProcessName() string {
 	var alts []string
-	addAlt := func(a string) {
-		if !seen[a] {
-			seen[a] = true
-			alts = append(alts, a)
-		}
-	}
-	wild := `(?:\.[*+]|\*)`
 	for _, w := range guardNames {
-		for i := 0; i+5 <= len(w); i++ {
-			addAlt(guardSeq(w[i : i+5]))
-		}
-		for i := 0; i+3 <= len(w); i++ {
-			s := guardSeq(w[i : i+3])
-			addAlt(s + `['"]*` + wild)
-			addAlt(wild + `['"]*` + s)
-		}
+		alts = append(alts, guardSeq(w))
 	}
-	return `(?:` + strings.Join(alts, "|") + `)`
+	return guardBoundary + `(?:` + strings.Join(alts, "|") + `)`
 }
 
 func selfProtectServicePattern() string {
@@ -526,7 +522,7 @@ func selfProtectLaunchdPattern() string {
 }
 
 func selfProtectKillPattern() string {
-	t := guardProcessTarget()
+	t := guardProcessName()
 	sub := "(?:\\$\\(|`)\\s*(?:pgrep|pidof)\\b[^;|&\\n#)`]*"
 	return `(?i)\b(?:killall|pkill)\b` + seg + t +
 		`|\bkill\b` + seg + sub + t +

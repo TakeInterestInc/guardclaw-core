@@ -31,6 +31,10 @@ func TestEngineDeniesSelfProtectionBypasses(t *testing.T) {
 		"sudo rm /Library/LaunchDaemons/com.guardclaw.daemon.plist",
 		"sudo rm /etc/systemd/system/guardclaw.service",
 		"PID=$(pgrep -f guardclaw); kill -9 $PID",
+		"pkill -f 'x|guardclaw'",
+		"kill $(pgrep -f 'z|guardclaw')",
+		"systemctl stop 'x;' guardclaw",
+		"pkill -f 'guardcl.*'",
 	} {
 		if r := e.Scan(cmd); r.Decision != "deny" {
 			t.Errorf("Scan(%q) = %s (%s), want deny", cmd, r.Decision, r.Reason)
@@ -44,6 +48,13 @@ func TestEngineDeniesSelfProtectionBypasses(t *testing.T) {
 		"grep -r kill docs | grep pgrep | grep guardian",
 		"pkill something  # guardclaw note",
 		"kill -9 4242; pgrep guardclaw",
+		"pkill -f 'node.*claude'",
+		"pkill -f 'python.*claim'",
+		"pkill -f 'law.*'",
+		"pkill safeguard",
+		"pkill -f vanguard-agent",
+		"killall guardduty-agent",
+		"pkill -f guardrail",
 	} {
 		if r := e.Scan(cmd); r.Decision == "deny" {
 			t.Errorf("Scan(%q) = deny (%v), want allow or escalate", cmd, r.MatchedPatterns)

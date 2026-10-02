@@ -36,18 +36,38 @@ An embedder that calls neither loses protection for its own files. See
   and alternate-stream suffixes such as `::$DATA`.
 - Every occurrence of a root marker or config-critical suffix is tried; a
   marker match no longer skips the config-suffix check.
+- Bounded work: a path longer than 4096 bytes, or one with more than 16
+  marker/suffix occurrences, is treated as protected (fail closed). Patterns
+  are case-folded and split once, when the checker is built or the pattern is
+  registered.
 
-### Self-protection command patterns
+### Self-protection command checks
 
-Pattern names are unchanged; the patterns are wider. They now catch flags
-before the unit name, `launchctl remove|bootout|unload|kill|stop`,
-`systemctl stop|kill|disable|mask`, `rm`/`mv` of the guard's launchd plist or
-systemd unit, kill by a PID from `pgrep`/`pidof` in the same command,
-`taskkill /IM` and `/FI` with globs, `sc`/`sc.exe stop|delete|config`,
-`Stop-Service`, `Stop-Process`, shell quoting or escapes inside the name, and
-regex or wildcard `pkill`/`killall`/`pgrep` targets. A match stays inside one
-command: a separator, pipe or `#` comment ends it. These remain text checks; a
-daemon that must survive a hostile agent needs OS-level protection as well.
+Pattern names are unchanged. The regex patterns match the guard's full names
+inside one command. A new `security.MatchSelfProtection` runs after them in
+`CheckCommandInjection` and in the tiered engine and reports under the same
+names. It splits commands the way a shell does (single and double quotes,
+backslash escapes, `$( )`, backticks, comments), so `pkill -f 'x|guardclaw'`
+is one command and `pgrep -l guardclaw; ./kill-switch.sh` is two. It reads a
+`pkill`/`pgrep` (and `killall -r`) target as a regex: the target counts when
+its match covers at least five characters of a guard name, so `guardcl.w`,
+`x|guardclaw` and `uardclaw` count while `law.*`, `node.*claude` and
+`guardrail` do not. With `-x` the whole name must match.
+
+Covered: `systemctl stop|kill|disable|mask`, `service ... stop`,
+`launchctl remove|bootout|unload|disable|kill|stop`, `rm`/`mv` of the guard's
+launchd plist or systemd unit, `pkill`, `killall`, `kill $(pgrep ...)`,
+`pgrep ... | xargs kill`, `VAR=$(pgrep ...); kill $VAR`, guard PID files,
+`taskkill /IM` and `/FI`, `sc`/`sc.exe stop|delete|config`, `Stop-Service`,
+`Set-Service -StartupType Disabled` and `Stop-Process`.
+
+Bounded work: more than 16 regex targets in one input, a target over 256
+bytes, a target that does not compile, or more than 16 nested substitutions
+is treated as a match (fail closed).
+
+These remain static text checks. They do not expand variables, aliases,
+functions or scripts. A daemon that must survive a hostile agent needs
+OS-level protection as well.
 
 ### CI
 
