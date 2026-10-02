@@ -68,6 +68,45 @@ case "allow":    // continue with the rest of your policy
 }
 ```
 
+### Protected paths
+
+`security.ProtectedPathChecker` answers "may an agent read or write this path?"
+for the egress scanner and for your own tool routing. The defaults are neutral:
+
+- `DefaultProtectedPaths`: agent and GuardClaw configuration in any project
+  (`.guardclaw/**`, `.mcp.json`, `.claude/settings.json`,
+  `.claude/settings.local.json`).
+- `DefaultSystemProtectedPaths`: OS and home-directory secrets (`/etc/shadow`,
+  `**/.ssh/**`, cloud credentials, shell history, browser stores, keychains).
+
+An application that embeds this package registers its own files at startup:
+
+```go
+// Repo-relative globs for the files your app must keep agents away from.
+security.AddProtectedPatterns([]string{"internal/policy/**", "cmd/mydaemon/**"})
+// Directory names that mark your project root, so an absolute path such as
+// /home/a/src/mydaemon/internal/policy/rules.go is matched as
+// internal/policy/rules.go.
+security.AddRootMarkers([]string{"mydaemon"})
+```
+
+Before 0.2.0 the default list named one application's source layout. It no
+longer does: if your application relied on that, it has no protection for its
+own files until it makes these calls (see [CHANGELOG.md](CHANGELOG.md)).
+
+Registered patterns apply to every checker from `NewDefaultProtectedPathChecker`
+and `NewDefaultWithSystemProtectedPathChecker`, including ones built before the
+call; `NewProtectedPathChecker(patterns)` uses exactly the patterns you pass.
+Both functions are safe for concurrent use.
+
+Matching cleans the path first (`/tmp/../etc/passwd` is `/etc/passwd`), drops
+the Windows trailing dots, spaces and `::$DATA`-style stream suffixes, uses full
+Unicode case folding on macOS and Windows (`.ſsh` matches `.ssh`), and treats
+`/private/etc`, `/private/var`, `/private/tmp`, `/System/Volumes/Data/...` and
+`/Volumes/<name>/private/etc|var` as the macOS aliases they are.
+It compares text: `IsProtectedOnDisk` also resolves symlinks for paths that
+exist, and neither replaces OS file permissions.
+
 ## What it detects
 
 Baseline patterns for prompt injection, command injection, SQL injection, SSRF,

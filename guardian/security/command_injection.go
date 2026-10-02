@@ -137,12 +137,21 @@ var CommandInjectionPatterns = []CommandInjectionPattern{
 	{regexp.MustCompile(`(?i)reboot`), CmdCategoryDestructive, 0.8, 0.85, "reboot", "reboot"},
 	{regexp.MustCompile(`(?i)init\s+0`), CmdCategoryDestructive, 0.9, 0.90, "init_0", "init 0"},
 	{regexp.MustCompile(`(?i)halt`), CmdCategoryDestructive, 0.8, 0.85, "halt", "halt"},
-	// Self-protection: attempts to disable GuardClaw/Guardian services or processes
-	{regexp.MustCompile(`(?i)\b(systemctl|service)\s+(stop|disable|mask)\s+(guardclaw|guardian)(\.service)?\b`), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_service_stop", "systemctl stop guardclaw"},
-	{regexp.MustCompile(`(?i)\blaunchctl\s+(unload|disable|bootout)\s+.*(guardclaw|guardian)`), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_launchctl_disable", "launchctl unload /Library/LaunchDaemons/com.guardclaw.daemon.plist"},
-	{regexp.MustCompile(`(?i)\b(killall|pkill)\s+.*(guardclaw|guardian)\b`), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_process_kill", "pkill guardclaw"},
-	{regexp.MustCompile(`(?i)\btaskkill\s+/IM\s+(guardclaw|guardian)(\.exe)?\b`), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_taskkill", "taskkill /IM guardclaw.exe"},
-	{regexp.MustCompile(`(?i)\bsc\s+stop\s+(guardclaw|guardian)\b`), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_sc_stop", "sc stop guardclaw"},
+	// Self-protection: attempts to stop, unload, delete or kill a
+	// GuardClaw/Guardian service or process. These regexes match the guard's
+	// full names (with quotes, a backslash or a one-character wildcard spliced
+	// in) inside one command. MatchSelfProtection (self_protection.go) runs
+	// after them in CheckCommandInjection and in the tiered engine and reports
+	// under the same names: it splits commands the way a shell does, respects
+	// quotes, and reads pkill/pgrep targets as regexes. Both are text checks; a
+	// daemon that must survive a hostile agent needs OS-level protection (run it
+	// as a user the agent cannot signal, under a supervisor that restarts it)
+	// and must not rely on them alone.
+	{regexp.MustCompile(withBackstop(selfProtectServicePattern(), backstopServiceStop)), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_service_stop", "systemctl stop guardclaw"},
+	{regexp.MustCompile(withBackstop(selfProtectLaunchdPattern(), backstopLaunchctl)), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_launchctl_disable", "launchctl unload /Library/LaunchDaemons/com.guardclaw.daemon.plist"},
+	{regexp.MustCompile(withBackstop(selfProtectKillPattern(), backstopProcessKill)), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_process_kill", "pkill guardclaw"},
+	{regexp.MustCompile(withBackstop(selfProtectTaskkillPattern(), backstopTaskkill)), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_taskkill", "taskkill /IM guardclaw.exe"},
+	{regexp.MustCompile(withBackstop(selfProtectWindowsServicePattern(), backstopScStop)), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_sc_stop", "sc stop guardclaw"},
 
 	// ==========================================
 	// CATEGORY: Data Exfiltration (25 patterns)
@@ -373,6 +382,19 @@ func CheckCommandInjection(input string) *CommandInjectionResult {
 		}
 	}
 
+	// Shell-aware self-protection check (quotes, regex targets). Reports under
+	// the matching regex pattern's name.
+	if bestMatch == nil || bestMatch.Severity < 1.0 {
+		if name, ok := MatchSelfProtection(input); ok {
+			for i := range CommandInjectionPatterns {
+				if CommandInjectionPatterns[i].Name == name {
+					bestMatch = &CommandInjectionPatterns[i]
+					break
+				}
+			}
+		}
+	}
+
 	if bestMatch != nil {
 		result.Detected = true
 		result.Score = bestMatch.Severity
@@ -428,4 +450,111 @@ func CheckCommandInput(input map[string]any) *CommandInjectionResult {
 	}
 
 	return worstResult
+}
+
+// Backstops: the self-protection regexes exactly as they shipped in the first
+// public release. Each current pattern is `(?:current)|(?:backstop)`, so the
+// rewrite can only add matches, never drop one the predecessor made. This
+// keeps that release's known false positive (`pkill x # guardclaw note`).
+const (
+	backstopServiceStop = `(?i)\b(systemctl|service)\s+(stop|disable|mask)\s+(guardclaw|guardian)(\.service)?\b`
+	backstopLaunchctl   = `(?i)\blaunchctl\s+(unload|disable|bootout)\s+.*(guardclaw|guardian)`
+	backstopProcessKill = `(?i)\b(killall|pkill)\s+.*(guardclaw|guardian)\b`
+	backstopTaskkill    = `(?i)\btaskkill\s+/IM\s+(guardclaw|guardian)(\.exe)?\b`
+	backstopScStop      = `(?i)\bsc\s+stop\s+(guardclaw|guardian)\b`
+)
+
+func withBackstop(current, backstop string) string {
+	return `(?:` + current + `)|(?:` + backstop + `)`
+}
+
+// guardNames are the process and service names the self-protection patterns
+// shield.
+var guardNames = []string{"guardclaw", "guardian"}
+
+// seg matches the rest of one simple shell command: it stops at a command
+// separator, a pipe and a comment, so a match never reaches into the next
+// command (`kill -9 4242; pgrep guardclaw` is two commands).
+const seg = `[^;|&\n#]*`
+
+// guardNameChar matches one letter of a guard name as a shell might spell it:
+// the letter with quotes or a backslash spliced in front (g"u"ard,
+// guard\claw), or a single-character wildcard standing for it (. ? or a
+// bracket class that contains the letter).
+func guardNameChar(c byte) string {
+	l := regexp.QuoteMeta(string(c))
+	return `['"\\]*(?:` + l + `|\.|\?|\[[^\]\s]*` + l + `[^\]\s]*\])`
+}
+
+func guardSeq(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		b.WriteString(guardNameChar(s[i]))
+	}
+	return b.String()
+}
+
+// guardServiceName matches a service or image name that resolves to a guard:
+// the full name in any guardNameChar spelling, or a prefix of five or more
+// letters followed by a glob '*' (systemctl, taskkill and rm accept globs).
+func guardServiceName() string {
+	var alts []string
+	for _, w := range guardNames {
+		alts = append(alts, guardSeq(w))
+		for n := 5; n < len(w); n++ {
+			alts = append(alts, guardSeq(w[:n])+`['"]*\*`)
+		}
+	}
+	return guardBoundary + `(?:` + strings.Join(alts, "|") + `)`
+}
+
+// guardBoundary keeps a guard name from matching inside a longer word
+// (safeguardian, vanguard).
+const guardBoundary = `\b`
+
+// guardProcessName matches a guard's full process name in any guardNameChar
+// spelling. Regex targets that only partly spell a name are judged by
+// MatchSelfProtection, which evaluates them as regexes.
+func guardProcessName() string {
+	var alts []string
+	for _, w := range guardNames {
+		alts = append(alts, guardSeq(w))
+	}
+	return guardBoundary + `(?:` + strings.Join(alts, "|") + `)`
+}
+
+func selfProtectServicePattern() string {
+	n := guardServiceName()
+	return `(?i)\bsystemctl\b` + seg + `\b(?:stop|kill|disable|mask)\b` + seg + n +
+		`|\bservice\s+['"]?` + n + `\S*\s+stop\b` +
+		`|\bservice\s+(?:stop|disable|mask)\s+['"]?` + n +
+		`|\b(?:rm|mv|unlink|shred)\b` + seg + `[^\s/;|&#]*` + n + `[^\s/;|&#]*\.service\b`
+}
+
+func selfProtectLaunchdPattern() string {
+	n := guardServiceName()
+	return `(?i)\blaunchctl\b` + seg + `\b(?:unload|disable|bootout|remove|kill|stop)\b` + seg + n +
+		`|\b(?:rm|mv|unlink|shred)\b` + seg + `Launch(?:Daemons|Agents)/[^\s/;|&#]*` + n + `[^\s/;|&#]*\.plist`
+}
+
+func selfProtectKillPattern() string {
+	t := guardProcessName()
+	sub := "(?:\\$\\(|`)\\s*(?:pgrep|pidof)\\b[^;|&\\n#)`]*"
+	return `(?i)\b(?:killall|pkill)\b` + seg + t +
+		`|\bkill\b` + seg + sub + t +
+		`|\b(?:pgrep|pidof)\b` + seg + t + seg + `\|\s*(?:sudo\s+)?xargs\b` + seg + `\bkill\b` +
+		`|\w+=` + sub + t + `[^;&\n#]*?(?:;|&&|\n)\s*(?:sudo\s+)?kill\b`
+}
+
+func selfProtectTaskkillPattern() string {
+	n := guardServiceName()
+	return `(?i)\btaskkill\b` + seg + `/(?:IM|FI)\s+['"]?(?:imagename\s+eq\s+)?` + n +
+		`|\bStop-Process\b` + seg + n
+}
+
+func selfProtectWindowsServicePattern() string {
+	n := guardServiceName()
+	return `(?i)\bsc(?:\.exe)?\s+(?:stop|delete|config)\s+['"]?` + n +
+		`|\b(?:Stop|Suspend|Remove)-Service\b` + seg + n +
+		`|\bSet-Service\b` + seg + n + seg + `-StartupType\s+['"]?Disabled`
 }

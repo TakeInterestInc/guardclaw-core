@@ -36,15 +36,43 @@ jobs:
         run: go test -race -count=1 ./...
 
   dco:
+    # The sign-off requirement is for outside contributors. Pull requests from
+    # organization owners and members skip the check. author_association alone
+    # is not enough: GitHub reports a member whose org membership is private as
+    # CONTRIBUTOR in the event payload, so the first step also asks the API for
+    # the author's repository permission. Anything it cannot confirm (an API
+    # error included) keeps the sign-off requirement.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: does this author need to sign off
+        id: who
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSOC: ${{ github.event.pull_request.author_association }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          required=true
+          case "$ASSOC" in
+            OWNER|MEMBER) required=false ;;
+            *)
+              perm="$(gh api "repos/$REPO/collaborators/$AUTHOR/permission" --jq .permission 2>/dev/null || echo unknown)"
+              case "$perm" in admin|maintain|write) required=false ;; esac
+              echo "author_association=$ASSOC repository permission=$perm"
+              ;;
+          esac
+          echo "sign-off required: $required"
+          echo "required=$required" >> "$GITHUB_OUTPUT"
+      - if: steps.who.outputs.required == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: every commit carries a Signed-off-by line
+        if: steps.who.outputs.required == 'true'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
