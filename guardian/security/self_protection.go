@@ -98,7 +98,7 @@ func MatchSelfProtection(cmd string) (string, bool) {
 // Shell-style splitting
 
 type shWord struct {
-	text string    // unquoted, unescaped text; substitutions are omitted
+	text string    // unquoted, unescaped text; a substitution keeps its source
 	subs [][]shCmd // command substitutions inside the word
 }
 
@@ -216,12 +216,16 @@ func (p *shParser) parseList(term byte) []shCmd {
 			}
 		case c == '$' && next == '(':
 			inWord = true
+			start := p.i
 			p.i += 2
 			subs = append(subs, p.sub(')'))
+			w.WriteString(p.s[start:p.i])
 		case c == '`':
 			inWord = true
+			start := p.i
 			p.i++
 			subs = append(subs, p.sub('`'))
+			w.WriteString(p.s[start:p.i])
 		default:
 			inWord = true
 			w.WriteByte(c)
@@ -257,11 +261,15 @@ func (p *shParser) readDouble(w *strings.Builder, subs *[][]shCmd) {
 			}
 			p.i += 2
 		case c == '$' && p.i+1 < len(p.s) && p.s[p.i+1] == '(':
+			start := p.i
 			p.i += 2
 			*subs = append(*subs, p.sub(')'))
+			w.WriteString(p.s[start:p.i])
 		case c == '`':
+			start := p.i
 			p.i++
 			*subs = append(*subs, p.sub('`'))
+			w.WriteString(p.s[start:p.i])
 		default:
 			w.WriteByte(c)
 			p.i++
@@ -275,6 +283,70 @@ func (p *shParser) readDouble(w *strings.Builder, subs *[][]shCmd) {
 type spState struct {
 	vars   map[string]bool // variables holding a guard PID from pgrep/pidof
 	budget int
+	depth  int // nested shell scripts (sh -c, eval, watch); see script
+}
+
+// script analyzes a string that another program runs as a shell command
+// (sh -c, su -c, eval, watch). Nesting deeper than shMaxDepth fails closed.
+func (st *spState) script(s string) (string, bool) {
+	if st.depth >= shMaxDepth {
+		return selfProtectKill, true
+	}
+	st.depth++
+	defer func() { st.depth-- }()
+	p := &shParser{s: s}
+	cmds := p.parseList(0)
+	if p.overflow {
+		return selfProtectKill, true
+	}
+	return st.list(cmds)
+}
+
+// shellScriptArg returns the script after -c (or a combined flag such as
+// -lc, or su's --command) in a shell or su argument list.
+func shellScriptArg(args []shWord) (string, bool) {
+	for i, a := range args {
+		t := a.text
+		if strings.HasPrefix(t, "--command=") {
+			return strings.TrimPrefix(t, "--command="), true
+		}
+		isC := t == "--command" || (strings.HasPrefix(t, "-") && !strings.HasPrefix(t, "--") && strings.ContainsRune(t[1:], 'c'))
+		if isC && i+1 < len(args) {
+			return args[i+1].text, true
+		}
+	}
+	return "", false
+}
+
+// skipOptions returns the arguments after leading options; letters in
+// withArg are short options that take a separate value.
+func skipOptions(args []shWord, withArg string) []shWord {
+	i := 0
+	for i < len(args) {
+		t := args[i].text
+		if t == "--" {
+			return args[i+1:]
+		}
+		if !strings.HasPrefix(t, "-") || len(t) < 2 {
+			break
+		}
+		i++
+		if !strings.HasPrefix(t, "--") && len(t) == 2 && strings.IndexByte(withArg, t[1]) >= 0 {
+			i++
+		}
+	}
+	if i > len(args) {
+		return nil
+	}
+	return args[i:]
+}
+
+func wordTexts(ws []shWord) string {
+	parts := make([]string, len(ws))
+	for i, w := range ws {
+		parts[i] = w.text
+	}
+	return strings.Join(parts, " ")
 }
 
 var shIdent = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -333,11 +405,12 @@ func splitCommand(words []shWord) (string, []shWord, []shWord) {
 			continue
 		}
 		switch strings.ToLower(t) {
-		case "{", "!", "then", "do", "else", "elif", "if", "while", "until", "time",
-			"nohup", "exec", "command", "builtin", "noglob":
+		case "{", "!", "then", "do", "else", "elif", "if", "while", "until",
+			"nohup", "builtin", "noglob", "busybox":
 			i++
 			continue
-		case "sudo", "doas", "env", "nice", "timeout", "stdbuf", "ionice", "chroot":
+		case "sudo", "doas", "env", "nice", "timeout", "stdbuf", "ionice", "chroot",
+			"command", "exec", "time":
 			i = skipWrapper(words, i)
 			continue
 		}
@@ -365,6 +438,9 @@ func skipWrapper(words []shWord, i int) int {
 		"env":     "uSC",
 		"nice":    "n",
 		"timeout": "sk",
+		"command": "",
+		"exec":    "a",
+		"time":    "fo",
 		"stdbuf":  "ioe",
 		"ionice":  "cnp",
 		"chroot":  "",
@@ -398,6 +474,21 @@ func skipWrapper(words []shWord, i int) int {
 
 func (st *spState) command(name string, args []shWord, prev, next *shCmd) (string, bool) {
 	switch name {
+	case "sh", "bash", "zsh", "dash", "ksh", "ash", "mksh", "fish", "su":
+		if s, ok := shellScriptArg(args); ok {
+			return st.script(s)
+		}
+	case "eval":
+		return st.script(wordTexts(args))
+	case "watch":
+		if rest := skipOptions(args, "ndgq"); len(rest) > 0 {
+			return st.script(wordTexts(rest))
+		}
+	case "xargs":
+		if rest := skipOptions(args, "IinLlPdEsa"); len(rest) > 0 {
+			n, a, _ := splitCommand(rest)
+			return st.command(n, a, nil, nil)
+		}
 	case "pkill":
 		if st.procSelects(name, args) {
 			return selfProtectKill, true
@@ -653,6 +744,16 @@ func (st *spState) regexSelectsGuard(target string, exact bool) bool {
 	st.budget--
 	if st.budget < 0 || len(target) > spMaxTarget {
 		return true
+	}
+	// A target that spells a full guard name anywhere (after removing regex
+	// backslash escapes) selects it: pkill matches unanchored, and the
+	// name's own match covers the whole name. This also covers process paths
+	// and arguments outside the fixed list below ('q|MacOS/guardclaw').
+	if !exact {
+		plain := foldCase(strings.ReplaceAll(target, `\`, ""))
+		if strings.Contains(plain, "guardclaw") || strings.Contains(plain, "guardian") {
+			return true
+		}
 	}
 	suffix := `)`
 	if exact {

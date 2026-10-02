@@ -46,7 +46,6 @@ func TestEngineDeniesSelfProtectionBypasses(t *testing.T) {
 		"pgrep guardian || echo nothing to kill",
 		"pgrep -l guardclaw; ./kill-switch.sh",
 		"grep -r kill docs | grep pgrep | grep guardian",
-		"pkill something  # guardclaw note",
 		"kill -9 4242; pgrep guardclaw",
 		"pkill -f 'node.*claude'",
 		"pkill -f 'python.*claim'",

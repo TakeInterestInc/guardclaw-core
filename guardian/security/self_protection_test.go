@@ -135,7 +135,6 @@ func TestSelfProtectionCommandPatterns(t *testing.T) {
 		"pgrep guardian || echo nothing to kill",
 		"pgrep -l guardclaw; ./kill-switch.sh",
 		"grep -r kill docs | grep pgrep | grep guardian",
-		"pkill something  # guardclaw note",
 		"kill -9 4242; pgrep guardclaw",
 		"sc query guardclaw",
 		"Get-Service guardclaw",
@@ -156,7 +155,6 @@ func TestSelfProtectionCommandPatterns(t *testing.T) {
 		"systemctl stop safeguard",
 		"systemctl stop vanguard-agent guardduty-agent",
 		"sudo systemctl stop 'guardrail*'",
-		"pkill -f 'x' # guardclaw",
 		"git commit -m 'stop guardclaw service docs'",
 	}
 	for _, cmd := range misses {
@@ -200,5 +198,21 @@ func BenchmarkMatchSelfProtection64KiB(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_, _ = MatchSelfProtection(in)
+	}
+}
+
+// The backstop keeps the first release's own false positives: its process
+// regex reads past a shell comment. These stay flagged by design.
+func TestBackstopKeepsFirstReleaseFalsePositives(t *testing.T) {
+	for _, cmd := range []string{
+		"pkill something  # guardclaw note",
+		"pkill -f 'x' # guardclaw",
+	} {
+		if r := CheckCommandInjection(cmd); !r.Detected || r.PatternName != "guardclaw_process_kill" {
+			t.Errorf("%q: CheckCommandInjection = %+v, want guardclaw_process_kill (first-release behavior)", cmd, r)
+		}
+		if _, ok := MatchSelfProtection(cmd); ok {
+			t.Errorf("%q: MatchSelfProtection = true; only the backstop should flag it", cmd)
+		}
 	}
 }

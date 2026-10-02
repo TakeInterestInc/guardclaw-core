@@ -61,9 +61,18 @@ launchd plist or systemd unit, `pkill`, `killall`, `kill $(pgrep ...)`,
 `taskkill /IM` and `/FI`, `sc`/`sc.exe stop|delete|config`, `Stop-Service`,
 `Set-Service -StartupType Disabled` and `Stop-Process`.
 
+It also follows commands run through `sh|bash|zsh -c`, `su -c`, `eval`,
+`watch`, `xargs`, `busybox`, `command`, `exec`, `time`, `nohup`, `env` and
+`sudo`, and any `pkill`/`pgrep` target that spells a full guard name counts.
+
+The first release's five self-protection regexes still run unchanged as a
+backstop alongside the new patterns, so nothing that release detected is
+dropped. That includes its known false positive: a guard name in a shell
+comment after `pkill` (`pkill x # guardclaw note`) is still flagged.
+
 Bounded work: more than 16 regex targets in one input, a target over 256
-bytes, a target that does not compile, or more than 16 nested substitutions
-is treated as a match (fail closed).
+bytes, a target that does not compile, more than 16 nested substitutions
+or nested shell scripts is treated as a match (fail closed).
 
 These remain static text checks. They do not expand variables, aliases,
 functions or scripts. A daemon that must survive a hostile agent needs

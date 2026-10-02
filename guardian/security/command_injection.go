@@ -147,11 +147,11 @@ var CommandInjectionPatterns = []CommandInjectionPattern{
 	// daemon that must survive a hostile agent needs OS-level protection (run it
 	// as a user the agent cannot signal, under a supervisor that restarts it)
 	// and must not rely on them alone.
-	{regexp.MustCompile(selfProtectServicePattern()), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_service_stop", "systemctl stop guardclaw"},
-	{regexp.MustCompile(selfProtectLaunchdPattern()), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_launchctl_disable", "launchctl unload /Library/LaunchDaemons/com.guardclaw.daemon.plist"},
-	{regexp.MustCompile(selfProtectKillPattern()), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_process_kill", "pkill guardclaw"},
-	{regexp.MustCompile(selfProtectTaskkillPattern()), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_taskkill", "taskkill /IM guardclaw.exe"},
-	{regexp.MustCompile(selfProtectWindowsServicePattern()), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_sc_stop", "sc stop guardclaw"},
+	{regexp.MustCompile(withBackstop(selfProtectServicePattern(), backstopServiceStop)), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_service_stop", "systemctl stop guardclaw"},
+	{regexp.MustCompile(withBackstop(selfProtectLaunchdPattern(), backstopLaunchctl)), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_launchctl_disable", "launchctl unload /Library/LaunchDaemons/com.guardclaw.daemon.plist"},
+	{regexp.MustCompile(withBackstop(selfProtectKillPattern(), backstopProcessKill)), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_process_kill", "pkill guardclaw"},
+	{regexp.MustCompile(withBackstop(selfProtectTaskkillPattern(), backstopTaskkill)), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_taskkill", "taskkill /IM guardclaw.exe"},
+	{regexp.MustCompile(withBackstop(selfProtectWindowsServicePattern(), backstopScStop)), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_sc_stop", "sc stop guardclaw"},
 
 	// ==========================================
 	// CATEGORY: Data Exfiltration (25 patterns)
@@ -450,6 +450,22 @@ func CheckCommandInput(input map[string]any) *CommandInjectionResult {
 	}
 
 	return worstResult
+}
+
+// Backstops: the self-protection regexes exactly as they shipped in the first
+// public release. Each current pattern is `(?:current)|(?:backstop)`, so the
+// rewrite can only add matches, never drop one the predecessor made. This
+// keeps that release's known false positive (`pkill x # guardclaw note`).
+const (
+	backstopServiceStop = `(?i)\b(systemctl|service)\s+(stop|disable|mask)\s+(guardclaw|guardian)(\.service)?\b`
+	backstopLaunchctl   = `(?i)\blaunchctl\s+(unload|disable|bootout)\s+.*(guardclaw|guardian)`
+	backstopProcessKill = `(?i)\b(killall|pkill)\s+.*(guardclaw|guardian)\b`
+	backstopTaskkill    = `(?i)\btaskkill\s+/IM\s+(guardclaw|guardian)(\.exe)?\b`
+	backstopScStop      = `(?i)\bsc\s+stop\s+(guardclaw|guardian)\b`
+)
+
+func withBackstop(current, backstop string) string {
+	return `(?:` + current + `)|(?:` + backstop + `)`
 }
 
 // guardNames are the process and service names the self-protection patterns
