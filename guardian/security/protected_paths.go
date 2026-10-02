@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+
+	"golang.org/x/text/cases"
 )
 
 // DefaultProtectedPaths is the neutral, universal default: agent and
@@ -121,8 +123,11 @@ var DefaultSystemProtectedPaths = []string{
 // pathCaseInsensitive reports whether path comparisons fold case. macOS
 // (APFS/HFS+ default) and Windows (NTFS) resolve ~/.SSH and ~/.ssh to the same
 // directory, so an exact-case match would let a differently-cased path slip
-// past a protected pattern. A variable rather than a constant so tests can
-// exercise both behaviors on any host.
+// past a protected pattern. Folding is full Unicode case folding (foldCase),
+// not ASCII lowercasing: U+017F LATIN SMALL LETTER LONG S folds to "s" and
+// U+212A KELVIN SIGN to "k", as a case-insensitive filesystem treats them. A
+// variable rather than a constant so tests can exercise both behaviors on any
+// host.
 var pathCaseInsensitive = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 
 // macOSRootAliases are prefixes that resolve to the same file as the path with
@@ -255,16 +260,19 @@ func NewDefaultWithSystemProtectedPathChecker() *ProtectedPathChecker {
 
 // IsProtected returns true if the given path matches any protected pattern.
 //
-// The path is cleaned first, so traversal segments are collapsed
-// (/tmp/../etc/passwd becomes /etc/passwd). On macOS and Windows the
-// comparison ignores case. macOS root aliases (/private/etc, /private/var,
-// /private/tmp, /System/Volumes/Data) are folded to their canonical form.
+// The path is cleaned first: Windows-equivalent spellings are normalized
+// (trailing dots and spaces on a segment, an alternate data stream suffix such
+// as ::$DATA), then traversal segments are collapsed (/tmp/../etc/passwd
+// becomes /etc/passwd). On macOS and Windows the comparison uses full Unicode
+// case folding. macOS root aliases (/private/etc, /private/var, /private/tmp,
+// /System/Volumes/Data, /Volumes/<name>/private/etc|var) are folded to their
+// canonical form.
 //
 // Each pattern is then tried against several forms of the path: the cleaned
 // path itself (for absolute patterns such as /etc/passwd), the path without
-// its leading slash, the part after any registered root marker, and, when the
-// path contains a config-critical suffix such as /.mcp.json, the part from that
-// suffix on, so agent configuration is protected in any project directory.
+// its leading slash, the part after every occurrence of every registered root
+// marker, and the part from every occurrence of a config-critical suffix such
+// as /.mcp.json, so agent configuration is protected in any project directory.
 func (p *ProtectedPathChecker) IsProtected(path string) bool {
 	clean := cleanPath(path)
 	if clean == "" || clean == "." || clean == "/" {
@@ -272,7 +280,7 @@ func (p *ProtectedPathChecker) IsProtected(path string) bool {
 	}
 	fold := pathCaseInsensitive
 	if fold {
-		clean = strings.ToLower(clean)
+		clean = foldCase(clean)
 	}
 	clean = canonicalRoot(clean, fold)
 
@@ -286,7 +294,7 @@ func (p *ProtectedPathChecker) IsProtected(path string) bool {
 	for _, form := range pathForms(clean, fold) {
 		for _, pattern := range patterns {
 			if fold {
-				pattern = strings.ToLower(pattern)
+				pattern = foldCase(pattern)
 			}
 			if matchGlob(pattern, form) {
 				return true
@@ -340,24 +348,91 @@ var configCriticalSuffixes = []string{
 	"/.guardclaw/",
 }
 
-// cleanPath trims, converts separators to forward slashes and collapses
-// . and .. segments. pathpkg.Clean is used rather than filepath.Clean so the
-// result keeps forward slashes on Windows too.
+// cleanPath trims, converts separators to forward slashes, normalizes
+// Windows-equivalent segment spellings and collapses . and .. segments.
+// pathpkg.Clean is used rather than filepath.Clean so the result keeps forward
+// slashes on Windows too.
+//
+// Windows opens "secret.txt. ", "secret.txt..." and "secret.txt::$DATA" as
+// secret.txt, so each segment drops an alternate-stream suffix (everything from
+// the first ':' unless the segment is a drive letter such as C:) and trailing
+// dots and spaces. This runs on every OS: on Unix those spellings name other
+// files, and treating them as the protected file only over-protects. A segment
+// that is only dots and spaces, other than "." and "..", becomes ".".
 func cleanPath(p string) string {
 	p = strings.TrimSpace(filepath.ToSlash(strings.TrimSpace(p)))
 	if p == "" {
 		return ""
 	}
-	return pathpkg.Clean(p)
+	segs := strings.Split(p, "/")
+	for i, seg := range segs {
+		segs[i] = windowsSegment(seg)
+	}
+	return pathpkg.Clean(strings.Join(segs, "/"))
+}
+
+// windowsSegment applies the Windows name normalization described on
+// cleanPath to one path segment.
+func windowsSegment(seg string) string {
+	if seg == "" || seg == "." || seg == ".." {
+		return seg
+	}
+	if idx := strings.IndexByte(seg, ':'); idx != -1 && !isDriveLetter(seg) {
+		seg = seg[:idx]
+	}
+	trimmed := strings.TrimRight(seg, ". ")
+	if trimmed == "" {
+		return "."
+	}
+	return trimmed
+}
+
+func isDriveLetter(seg string) bool {
+	if len(seg) != 2 || seg[1] != ':' {
+		return false
+	}
+	c := seg[0]
+	return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')
+}
+
+// foldCase applies full Unicode case folding. A new Caser per call because a
+// cases.Caser must not be shared between goroutines.
+func foldCase(s string) string {
+	return cases.Fold().String(s)
+}
+
+// indexAll returns the start of every occurrence of sub in s, overlapping
+// ones included.
+func indexAll(s, sub string) []int {
+	var out []int
+	if sub == "" {
+		return out
+	}
+	for start := 0; start <= len(s)-len(sub); {
+		idx := strings.Index(s[start:], sub)
+		if idx == -1 {
+			break
+		}
+		out = append(out, start+idx)
+		start += idx + 1
+	}
+	return out
 }
 
 // canonicalRoot folds macOS root aliases to their canonical form, repeating
 // until none applies so chained aliases such as
 // /System/Volumes/Data/private/etc resolve to /etc. The input is already
-// lowercased when fold is true.
+// case-folded when fold is true; the stored prefixes are their own fold.
+//
+// /Volumes/<name>/private/etc and /Volumes/<name>/private/var are also folded,
+// because the boot volume is reachable under /Volumes by its name.
 func canonicalRoot(p string, fold bool) string {
 	for changed := true; changed; {
 		changed = false
+		if rest, ok := volumesPrivate(p, fold); ok {
+			p = rest
+			changed = true
+		}
 		for _, a := range macOSRootAliases {
 			prefix := a.prefix
 			if !fold {
@@ -372,6 +447,28 @@ func canonicalRoot(p string, fold bool) string {
 		}
 	}
 	return p
+}
+
+// volumesPrivate strips a /Volumes/<name> prefix when what follows is
+// /private/etc/ or /private/var/.
+func volumesPrivate(p string, fold bool) (string, bool) {
+	prefix := "/Volumes/"
+	if fold {
+		prefix = "/volumes/"
+	}
+	if !strings.HasPrefix(p, prefix) {
+		return p, false
+	}
+	after := p[len(prefix):]
+	slash := strings.IndexByte(after, '/')
+	if slash <= 0 {
+		return p, false
+	}
+	rest := after[slash:]
+	if strings.HasPrefix(rest, "/private/etc/") || strings.HasPrefix(rest, "/private/var/") {
+		return rest, true
+	}
+	return p, false
 }
 
 // macOSCase returns the on-disk spelling of a lowercase alias prefix.
@@ -403,9 +500,9 @@ func pathForms(clean string, fold bool) []string {
 		add(strings.TrimPrefix(clean, "/"))
 		for _, marker := range registeredRootMarkers() {
 			if fold {
-				marker = strings.ToLower(marker)
+				marker = foldCase(marker)
 			}
-			if idx := strings.Index(clean, marker); idx != -1 {
+			for _, idx := range indexAll(clean, marker) {
 				add(clean[idx+len(marker):])
 			}
 		}
@@ -414,7 +511,10 @@ func pathForms(clean string, fold bool) []string {
 	}
 
 	for _, suffix := range configCriticalSuffixes {
-		if idx := strings.Index(rooted, suffix); idx != -1 {
+		if fold {
+			suffix = foldCase(suffix)
+		}
+		for _, idx := range indexAll(rooted, suffix) {
 			add(rooted[idx+1:])
 		}
 	}

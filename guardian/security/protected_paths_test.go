@@ -5,6 +5,8 @@ package security
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -224,5 +226,145 @@ func TestProtectedPathRegistryConcurrent(t *testing.T) {
 	wg.Wait()
 	if !c.IsProtected("/x/root3/app3/f") {
 		t.Fatal("registration lost under concurrency")
+	}
+}
+
+func TestProtectedPathUnicodeCaseFolding(t *testing.T) {
+	resetRegistry(t)
+	c := NewDefaultWithSystemProtectedPathChecker()
+	// U+017F LATIN SMALL LETTER LONG S folds to "s"; U+212A KELVIN SIGN to "k".
+	folded := []string{
+		"/Users/a/.\u017Fsh/id_ed25519",
+		"/Users/a/.S\u017FH/config",
+		"/Users/a/proj/.mcp.j\u017Fon",
+		"/Users/a/proj/.claude/\u017Fettings.json",
+		"/Users/a/.\u212Aube/config",
+		"/Users/a/.kUBE/CONFIG",
+		"/\u212Aube/../etc/\u017Fhadow",
+	}
+	withCaseFolding(t, true, func() {
+		for _, p := range folded {
+			if !c.IsProtected(p) {
+				t.Errorf("fold: IsProtected(%q) = false, want true", p)
+			}
+		}
+		if c.IsProtected("/Users/a/.sshkeys/notes.txt") {
+			t.Error("fold: unrelated path protected")
+		}
+	})
+	withCaseFolding(t, false, func() {
+		if c.IsProtected("/Users/a/.\u017Fsh/id_ed25519") {
+			t.Error("no fold: a case-sensitive host treats .\u017Fsh as a different directory")
+		}
+	})
+}
+
+func TestIsProtectedOnDiskUnicodeFold(t *testing.T) {
+	resetRegistry(t)
+	dir := t.TempDir()
+	name := filepath.Join(dir, ".mcp.j\u017Fon")
+	if err := os.WriteFile(name, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "innocent.txt")
+	if err := os.Symlink(name, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	c := NewDefaultProtectedPathChecker()
+	withCaseFolding(t, true, func() {
+		if !c.IsProtectedOnDisk(name) {
+			t.Errorf("IsProtectedOnDisk(%q) = false", name)
+		}
+		if !c.IsProtectedOnDisk(link) {
+			t.Errorf("IsProtectedOnDisk(symlink to %q) = false", name)
+		}
+	})
+}
+
+func TestRootMarkerEveryOccurrence(t *testing.T) {
+	resetRegistry(t)
+	AddProtectedPatterns([]string{"internal/policy/**"})
+	AddRootMarkers([]string{"mydaemon"})
+	c := NewDefaultProtectedPathChecker()
+	for _, p := range []string{
+		"/home/mydaemon/src/mydaemon/internal/policy/x.go",
+		"/mydaemon/a/mydaemon/b/mydaemon/internal/policy/x.go",
+		"/srv/mydaemon/internal/policy/x.go",
+	} {
+		if !c.IsProtected(p) {
+			t.Errorf("IsProtected(%q) = false, want true", p)
+		}
+	}
+	if c.IsProtected("/home/mydaemon/src/other/internal/policy/x.go") {
+		t.Error("path outside any marker root protected")
+	}
+}
+
+func TestConfigSuffixEveryOccurrence(t *testing.T) {
+	resetRegistry(t)
+	c := NewDefaultProtectedPathChecker()
+	for _, p := range []string{
+		"/a/.mcp.json.bak/b/.mcp.json",
+		"/a/.claude/settings.json.d/b/.claude/settings.json",
+	} {
+		if !c.IsProtected(p) {
+			t.Errorf("IsProtected(%q) = false, want true", p)
+		}
+	}
+}
+
+func TestProtectedPathWindowsNames(t *testing.T) {
+	resetRegistry(t)
+	c := NewDefaultWithSystemProtectedPathChecker()
+	for _, fold := range []bool{true, false} {
+		withCaseFolding(t, fold, func() {
+			for _, p := range []string{
+				"C:/Users/a/proj/.mcp.json.",
+				"C:/Users/a/proj/.mcp.json. . ",
+				"C:/Users/a/proj/.mcp.json::$DATA",
+				"C:/Users/a/proj/.mcp.json:hidden:$DATA",
+				"C:/Users/a/.ssh./id_rsa",
+				"C:/Users/a/.ssh::$INDEX_ALLOCATION/id_rsa",
+				"C:/Users/a/.git-credentials ",
+				"/etc/passwd.",
+				"/etc/shadow::$DATA",
+			} {
+				if !c.IsProtected(p) {
+					t.Errorf("fold=%v: IsProtected(%q) = false, want true", fold, p)
+				}
+			}
+			for _, p := range []string{"C:/Users/a/proj/main.go", "C:/Users/a/proj/.mcp.jsonx", "C:/"} {
+				if c.IsProtected(p) {
+					t.Errorf("fold=%v: IsProtected(%q) = true, want false", fold, p)
+				}
+			}
+		})
+	}
+	if got := cleanPath("C:/a/b. /c::$DATA"); got != "C:/a/b/c" {
+		t.Errorf("cleanPath = %q, want C:/a/b/c", got)
+	}
+	if got := cleanPath("/a/.../b"); got != "/a/b" {
+		t.Errorf("cleanPath dots-only segment = %q, want /a/b", got)
+	}
+}
+
+func TestProtectedPathVolumesAlias(t *testing.T) {
+	resetRegistry(t)
+	c := NewDefaultWithSystemProtectedPathChecker()
+	for _, fold := range []bool{true, false} {
+		withCaseFolding(t, fold, func() {
+			for _, p := range []string{
+				"/Volumes/Macintosh HD/private/etc/passwd",
+				"/Volumes/Data/private/var/log/auth.log",
+				"/Volumes/Macintosh HD/private/etc/../etc/sudoers",
+			} {
+				if !c.IsProtected(p) {
+					t.Errorf("fold=%v: IsProtected(%q) = false, want true", fold, p)
+				}
+			}
+			if c.IsProtected("/Volumes/USB/private/notes.txt") {
+				t.Errorf("fold=%v: unrelated /Volumes path protected", fold)
+			}
+		})
 	}
 }
