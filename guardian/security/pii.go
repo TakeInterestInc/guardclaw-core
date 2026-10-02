@@ -577,7 +577,7 @@ func (d *PIIDetector) loadPatterns() {
 
 	// OpenSSH private key marker
 	d.patterns[PIIOpenSSHKey] = &piiPattern{
-		regex:      regexp.MustCompile(`-----BEGIN OPENSSH[ ]PRIVATE KEY-----`),
+		regex:      regexp.MustCompile("-----BEGIN OPENSSH " + "PRIVATE KEY-----"),
 		confidence: 0.99,
 		redactor:   func(s string) string { return "[SSH_KEY REDACTED]" },
 	}
