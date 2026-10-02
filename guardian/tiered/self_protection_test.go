@@ -21,9 +21,32 @@ func TestEngineDeniesSelfProtectionBypasses(t *testing.T) {
 		"pgrep guardclaw | xargs kill -9",
 		"killall -KILL GuardClaw",
 		"taskkill /F /IM guardclaw.exe",
+		"taskkill /im guardclaw*",
+		"sc.exe stop guardclaw",
+		"Stop-Service -Name guardclaw",
+		"pkill -f 'guardcl.w'",
+		"pkill guard[c]law",
+		"pkill -f uardclaw",
+		`systemctl stop guard\claw`,
+		"sudo rm /Library/LaunchDaemons/com.guardclaw.daemon.plist",
+		"sudo rm /etc/systemd/system/guardclaw.service",
+		"PID=$(pgrep -f guardclaw); kill -9 $PID",
 	} {
 		if r := e.Scan(cmd); r.Decision != "deny" {
 			t.Errorf("Scan(%q) = %s (%s), want deny", cmd, r.Decision, r.Reason)
+		}
+	}
+	// Separate commands that only mention a guard name. Generic chaining
+	// patterns may still escalate these; none may be denied.
+	for _, cmd := range []string{
+		"pgrep guardian || echo nothing to kill",
+		"pgrep -l guardclaw; ./kill-switch.sh",
+		"grep -r kill docs | grep pgrep | grep guardian",
+		"pkill something  # guardclaw note",
+		"kill -9 4242; pgrep guardclaw",
+	} {
+		if r := e.Scan(cmd); r.Decision == "deny" {
+			t.Errorf("Scan(%q) = deny (%v), want allow or escalate", cmd, r.MatchedPatterns)
 		}
 	}
 }

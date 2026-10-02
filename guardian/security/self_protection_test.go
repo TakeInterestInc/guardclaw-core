@@ -40,6 +40,33 @@ func TestSelfProtectionCommandPatterns(t *testing.T) {
 		// Windows
 		{"taskkill /F /IM guardclaw.exe", "guardclaw_taskkill"},
 		{"sc stop guardclaw", "guardclaw_sc_stop"},
+		{"taskkill /im guardclaw*", "guardclaw_taskkill"},
+		{`taskkill /f /fi "imagename eq guardclaw*"`, "guardclaw_taskkill"},
+		{"Stop-Process -Name guardclaw -Force", "guardclaw_taskkill"},
+		{"sc.exe stop guardclaw", "guardclaw_sc_stop"},
+		{"sc config guardclaw start= disabled", "guardclaw_sc_stop"},
+		{"Stop-Service -Name GuardClaw -Force", "guardclaw_sc_stop"},
+		{"Set-Service -Name guardclaw -StartupType Disabled", "guardclaw_sc_stop"},
+		// Regex and glob targets: pkill -f / pgrep -f read the target as a regex.
+		{"pkill guard[c]law", "guardclaw_process_kill"},
+		{"pkill -f 'guard.law'", "guardclaw_process_kill"},
+		{"pkill -f guardcla", "guardclaw_process_kill"},
+		{"pkill -f 'guardcl.w'", "guardclaw_process_kill"},
+		{"pkill -f uardclaw", "guardclaw_process_kill"},
+		{"pkill -f 'gu.*claw'", "guardclaw_process_kill"},
+		{"killall 'g[u]ardian'", "guardclaw_process_kill"},
+		{"kill -9 $(pgrep -f 'guard[c]law')", "guardclaw_process_kill"},
+		// Shell quoting and escapes spliced into the name.
+		{`systemctl stop guard\claw`, "guardclaw_service_stop"},
+		{`systemctl stop g"u"ardclaw`, "guardclaw_service_stop"},
+		{"systemctl stop 'guardcl*'", "guardclaw_service_stop"},
+		{`launchctl bootout system/com.guard\claw.daemon`, "guardclaw_launchctl_disable"},
+		// Removing or moving the guard's own service files.
+		{"sudo rm /Library/LaunchDaemons/com.guardclaw.daemon.plist", "guardclaw_launchctl_disable"},
+		{"rm -f /Library/LaunchDaemons/com.guardclaw*.plist", "guardclaw_launchctl_disable"},
+		{"mv ~/Library/LaunchAgents/ai.guardclaw.agent.plist /tmp/", "guardclaw_launchctl_disable"},
+		{"sudo rm /etc/systemd/system/guardclaw.service", "guardclaw_service_stop"},
+		{"mv /lib/systemd/system/guardclaw-daemon.service /root/", "guardclaw_service_stop"},
 	}
 	for _, tc := range hits {
 		var matched []string
@@ -73,6 +100,18 @@ func TestSelfProtectionCommandPatterns(t *testing.T) {
 		"pkill node",
 		"service guardclaw status",
 		"echo guardclaw is running",
+		// Command boundaries: a separator, pipe or comment ends the command.
+		"pgrep guardian || echo nothing to kill",
+		"pgrep -l guardclaw; ./kill-switch.sh",
+		"grep -r kill docs | grep pgrep | grep guardian",
+		"pkill something  # guardclaw note",
+		"kill -9 4242; pgrep guardclaw",
+		"sc query guardclaw",
+		"Get-Service guardclaw",
+		"taskkill /IM notepad.exe",
+		"rm /Library/LaunchDaemons/com.example.daemon.plist",
+		"cat /etc/systemd/system/guardclaw.service",
+		"launchctl print system/com.guard\\claw.daemon",
 	}
 	for _, cmd := range misses {
 		for _, p := range CommandInjectionPatterns {

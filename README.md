@@ -90,14 +90,20 @@ security.AddProtectedPatterns([]string{"internal/policy/**", "cmd/mydaemon/**"})
 security.AddRootMarkers([]string{"mydaemon"})
 ```
 
+Before 0.2.0 the default list named one application's source layout. It no
+longer does: if your application relied on that, it has no protection for its
+own files until it makes these calls (see [CHANGELOG.md](CHANGELOG.md)).
+
 Registered patterns apply to every checker from `NewDefaultProtectedPathChecker`
 and `NewDefaultWithSystemProtectedPathChecker`, including ones built before the
 call; `NewProtectedPathChecker(patterns)` uses exactly the patterns you pass.
 Both functions are safe for concurrent use.
 
-Matching cleans the path first (`/tmp/../etc/passwd` is `/etc/passwd`), ignores
-case on macOS and Windows, and treats `/private/etc`, `/private/var`,
-`/private/tmp` and `/System/Volumes/Data/...` as the macOS aliases they are.
+Matching cleans the path first (`/tmp/../etc/passwd` is `/etc/passwd`), drops
+the Windows trailing dots, spaces and `::$DATA`-style stream suffixes, uses full
+Unicode case folding on macOS and Windows (`.ſsh` matches `.ssh`), and treats
+`/private/etc`, `/private/var`, `/private/tmp`, `/System/Volumes/Data/...` and
+`/Volumes/<name>/private/etc|var` as the macOS aliases they are.
 It compares text: `IsProtectedOnDisk` also resolves symlinks for paths that
 exist, and neither replaces OS file permissions.
 
