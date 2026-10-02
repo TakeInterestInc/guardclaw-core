@@ -137,11 +137,20 @@ var CommandInjectionPatterns = []CommandInjectionPattern{
 	{regexp.MustCompile(`(?i)reboot`), CmdCategoryDestructive, 0.8, 0.85, "reboot", "reboot"},
 	{regexp.MustCompile(`(?i)init\s+0`), CmdCategoryDestructive, 0.9, 0.90, "init_0", "init 0"},
 	{regexp.MustCompile(`(?i)halt`), CmdCategoryDestructive, 0.8, 0.85, "halt", "halt"},
-	// Self-protection: attempts to disable GuardClaw/Guardian services or processes
-	{regexp.MustCompile(`(?i)\b(systemctl|service)\s+(stop|disable|mask)\s+(guardclaw|guardian)(\.service)?\b`), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_service_stop", "systemctl stop guardclaw"},
-	{regexp.MustCompile(`(?i)\blaunchctl\s+(unload|disable|bootout)\s+.*(guardclaw|guardian)`), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_launchctl_disable", "launchctl unload /Library/LaunchDaemons/com.guardclaw.daemon.plist"},
-	{regexp.MustCompile(`(?i)\b(killall|pkill)\s+.*(guardclaw|guardian)\b`), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_process_kill", "pkill guardclaw"},
-	{regexp.MustCompile(`(?i)\btaskkill\s+/IM\s+(guardclaw|guardian)(\.exe)?\b`), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_taskkill", "taskkill /IM guardclaw.exe"},
+	// Self-protection: attempts to stop, unload or kill a GuardClaw/Guardian
+	// service or process. These are text patterns over one command string, so
+	// they catch the common spellings (flags before the unit name, launchctl
+	// remove/bootout, kill by a PID looked up with pgrep in the same command) and
+	// miss anything that hides the name: a variable, a script file, a PID typed
+	// as a number, another tool. A daemon that must survive a hostile agent needs
+	// OS-level protection (run it as a user the agent cannot signal, under a
+	// supervisor that restarts it) and must not rely on these patterns alone.
+	// [^;|&\n] keeps each match inside one simple command, so
+	// `systemctl stop nginx && cat guardian.log` is not flagged.
+	{regexp.MustCompile(`(?i)\bsystemctl\b[^;|&\n]*\b(?:stop|kill|disable|mask)\b[^;|&\n]*\b(?:guardclaw|guardian)|\bservice\s+(?:guardclaw|guardian)\S*\s+stop\b|\bservice\s+(?:stop|disable|mask)\s+(?:guardclaw|guardian)\b`), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_service_stop", "systemctl stop guardclaw"},
+	{regexp.MustCompile(`(?i)\blaunchctl\b[^;|&\n]*\b(?:unload|disable|bootout|remove|kill|stop)\b[^;|&\n]*(?:guardclaw|guardian)`), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_launchctl_disable", "launchctl unload /Library/LaunchDaemons/com.guardclaw.daemon.plist"},
+	{regexp.MustCompile(`(?i)\b(?:killall|pkill)\b[^;|&\n]*(?:guardclaw|guardian)|\bkill\b[^\n]*\b(?:pgrep|pidof)\b[^\n]*(?:guardclaw|guardian)|\b(?:pgrep|pidof)\b[^\n]*(?:guardclaw|guardian)[^\n]*\bkill\b`), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_process_kill", "pkill guardclaw"},
+	{regexp.MustCompile(`(?i)\btaskkill\b[^;|&\n]*/IM\s+(guardclaw|guardian)(\.exe)?\b`), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_taskkill", "taskkill /IM guardclaw.exe"},
 	{regexp.MustCompile(`(?i)\bsc\s+stop\s+(guardclaw|guardian)\b`), CmdCategoryDestructive, 1.0, 0.95, "guardclaw_sc_stop", "sc stop guardclaw"},
 
 	// ==========================================
