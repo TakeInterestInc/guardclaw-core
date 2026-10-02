@@ -1,0 +1,16 @@
+{
+  "name": "guardclaw",
+  "owner": {
+    "name": "TakeInterest Inc."
+  },
+  "metadata": {
+    "description": "GuardClaw for Claude Code: a deny-only guard mod."
+  },
+  "plugins": [
+    {
+      "name": "guardclaw",
+      "source": "./claude-code-mod",
+      "description": "Denies destructive shell commands, pipe-to-shell installs, credential egress and writes to credential paths, and refuses other mods that could approve tool calls."
+    }
+  ]
+}

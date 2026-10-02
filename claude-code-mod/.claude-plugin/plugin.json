@@ -1,0 +1,34 @@
+{
+  "name": "guardclaw",
+  "version": "0.1.0",
+  "description": "GuardClaw guard for Claude Code: denies destructive shell commands, pipe-to-shell installs, credential egress and writes to credential paths, and refuses other mods that could approve tool calls. Deny-only and fail-closed.",
+  "author": {
+    "name": "TakeInterest Inc."
+  },
+  "homepage": "https://github.com/TakeInterestInc/guardclaw-core",
+  "repository": "https://github.com/TakeInterestInc/guardclaw-core",
+  "license": "Apache-2.0",
+  "keywords": [
+    "security",
+    "guard",
+    "hooks",
+    "guardclaw"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "allowMods": {
+      "type": "string",
+      "multiple": true,
+      "title": "Mods allowed to hook tool approval",
+      "description": "Names or name@marketplace ids of mods that may load even though they hook tool.call, tool.check, session.append, classic.PreToolUse or classic.PermissionRequest. Prefer name@marketplace: a name alone is whatever the mod's own plugin.json says.",
+      "default": []
+    },
+    "extraDenyPatterns": {
+      "type": "string",
+      "multiple": true,
+      "title": "Extra deny patterns",
+      "description": "JavaScript regular expressions matched (case-insensitive) against every Bash command. A pattern that does not compile denies every Bash call until it is fixed, so a typo never opens the guard.",
+      "default": []
+    }
+  }
+}
