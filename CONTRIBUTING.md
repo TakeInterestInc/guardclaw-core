@@ -18,9 +18,10 @@ Signed-off-by: Your Name <you@example.com>
 
 CI (`.github/workflows/ci.yml`, job `dco`) checks that every non-merge commit
 in a pull request carries a `Signed-off-by:` line. It checks that the line is
-present, not that the name matches the commit author. The job is skipped for
-pull requests opened by organization owners and members (GitHub's
-`author_association` of `OWNER` or `MEMBER`); every other contributor signs off.
+present, not that the name matches the commit author. Pull requests opened by
+organization owners and members skip the check (GitHub's `author_association`
+of `OWNER` or `MEMBER`, or write access to the repository, which covers members
+whose org membership is private). Every other contributor signs off.
 
 ## How to contribute
 
