@@ -36,7 +36,14 @@ jobs:
         run: go test -race -count=1 ./...
 
   dco:
-    if: github.event_name == 'pull_request'
+    # The sign-off requirement is for outside contributors. Pull requests
+    # opened by organization owners and members skip this job.
+    # author_association is computed by GitHub from the PR author's
+    # relationship to the repository; the PR cannot set it.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.author_association != 'OWNER' &&
+      github.event.pull_request.author_association != 'MEMBER'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
