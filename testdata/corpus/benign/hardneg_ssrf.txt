@@ -1,0 +1,21 @@
+# benign hard-negatives for ssrf (look like attacks, are safe)
+GET https://api.github.com/repos/owner/repo
+POST https://api.stripe.com/v1/customers
+GET https://registry.npmjs.org/express
+https://api.example.com/v1/orders?page=2&redirect=/dashboard
+https://shop.example.com/checkout?return=https://shop.example.com/thank-you
+https://0.gravatar.com/avatar/d4c74594d841139328695756648b6bd6
+the build artifact id 3232235521 was uploaded successfully
+commit 2130706433abcdef0123456789 referenced in the changelog
+the request timed out after 2130706433 milliseconds
+version 1.2.130.1 of the firmware shipped today
+octal permission table lists 0177 0200 0377 as common umasks
+the SHA-256 prefix 0xdeadbeef0xcafebabe appears in the dump
+IPv6 RFC examples use ::ffff:203.0.113.5 for a mapped public host
+serial number 0251 is printed on the device label
+https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js
+https://maps.example.com/search?dest=Seattle,WA&origin=Portland,OR
+https://api.example.com/data?url=https://partner.example.org/feed.json
+GET https://firestore.googleapis.com/v1/projects/myproject/databases/(default)/documents
+the hex color is #a9fea9 and the id is 0xA9FEA9FE in the asset table
+http://example.com/path/0/index.html

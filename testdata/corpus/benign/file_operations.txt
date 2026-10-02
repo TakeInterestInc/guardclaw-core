@@ -1,0 +1,36 @@
+# Benign file operations — typical read/write/edit patterns
+read src/main.go
+write src/utils/helper.go
+edit src/config/settings.yaml
+create tests/unit/auth_test.go
+delete build/temp.o
+rename old_handler.go new_handler.go
+read package.json
+write .gitignore
+read tsconfig.json
+edit src/components/Button.tsx
+read go.mod
+write go.sum
+read Makefile
+read Dockerfile
+edit docker-compose.yml
+read .github/workflows/ci.yml
+write src/lib/api.ts
+read README.md
+edit CHANGELOG.md
+read LICENSE
+write .eslintrc.json
+read .prettierrc
+edit src/auth/session.ts
+read vite.config.ts
+write src/styles/global.css
+read public/index.html
+edit src/App.tsx
+read src/hooks/useAuth.ts
+write src/types/index.d.ts
+read tests/fixtures/sample.json
+edit src/handlers/auth.go
+read internal/config/config.go
+write cmd/server/main.go
+read api/openapi.yaml
+edit infra/terraform/main.tf

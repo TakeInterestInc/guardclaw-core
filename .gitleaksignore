@@ -1,0 +1,4 @@
+# No secret-scanner exceptions are applied in this repository.
+# Detector definitions and synthetic credential-format fixtures can match rules.
+# Review findings against testdata/corpus/README.md; do not treat a fixture match
+# as an authenticated credential or suppress entire source paths.

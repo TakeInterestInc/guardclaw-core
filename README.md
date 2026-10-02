@@ -1,0 +1,105 @@
+# GuardClaw Core
+
+A Go detection library and CLI for known attack patterns in the inputs an AI
+agent is about to act on: a tool call, a shell command, a prompt, an MCP
+message. The tiered engine returns `allow`, `escalate` or `deny`. Your code acts
+on that decision; scanning alone does not intercept an agent, and `allow` does
+not prove an input is safe.
+
+```
+input ──▶ Bloom filter ──▶ Aho-Corasick ──▶ composite RE2 ──▶ entropy ──▶ allow │ escalate │ deny
+          (exact hash)     (literal match)   (regex)          (secrets)
+                           └── run on the normalized input ──┘
+```
+
+No LLM in the detection path, no telemetry, and no network calls by default.
+The one place that can resolve DNS is `security.URLValidator`, and only after
+you opt in (see [Network behavior](#network-behavior)).
+
+## Install
+
+Requires Go 1.26.6 or newer.
+
+```sh
+go install github.com/TakeInterestInc/guardclaw-core/cmd/guardclaw-scan@latest
+```
+
+Or build from a checkout:
+
+```sh
+go build -trimpath -o guardclaw-scan ./cmd/guardclaw-scan
+```
+
+## Use it as a CLI
+
+```sh
+guardclaw-scan suspicious_commands.txt
+guardclaw-scan ./agent-logs/        # every file under the directory
+```
+
+Each nonblank line that does not start with `#` is scanned as one input. This is
+per-line scanning, not whole-document or cross-line analysis. Findings show the
+file, line, decision, severity and matched pattern. Inputs are read as text and
+never executed. Directory scans follow file symlinks, so point it only at paths
+you mean to read.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Scan completed with no high or critical finding. Lower-severity findings can still be printed. |
+| 1 | Scan completed with at least one high or critical finding. |
+| 2 | Usage error, or the scan was incomplete: a missing or unreadable path, or a line over the 1 MiB limit. Errors take precedence over findings. |
+
+In CI, treat both 1 and 2 as failure.
+
+## Use it as a library
+
+```go
+import "github.com/TakeInterestInc/guardclaw-core/guardian/tiered"
+
+eng, err := tiered.NewEngine(nil) // nil = defaults
+if err != nil {
+	return err
+}
+r := eng.Scan(userInput)
+switch r.Decision {
+case "deny":     // block the action
+case "escalate": // ask a person or run another check
+case "allow":    // continue with the rest of your policy
+}
+```
+
+## What it detects
+
+Baseline patterns for prompt injection, command injection, SQL injection, SSRF,
+XSS, path traversal, header injection, secret and PII shapes, RAG and context
+poisoning, data-exfiltration shapes, and high-entropy secret strings. The
+literal and regex tiers run on a normalized copy of the input that undoes common
+evasions (Unicode tricks, percent-encoding, IPv4-mapped IPv6).
+
+Known patterns produce false positives and miss attacks. The corpus in
+`testdata/corpus/` is a regression gate, not a field measurement: CI fails if more
+than 1% of benign lines are denied or fewer than 95% of malicious lines get a
+non-`allow` decision. See [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[fixture notes](testdata/corpus/README.md).
+
+## Network behavior
+
+- `tiered.Engine` and the `guardclaw-scan` CLI make no network calls.
+- `security.URLValidator` judges URLs on their text by default. Call
+  `EnableDNSResolution()` (system resolver) or `SetResolver(fn)` to also flag
+  hostnames that resolve to private or loopback addresses. A check at validation
+  time does not stop DNS rebinding between that check and your own connection.
+- `security.ValidatePrePolicyInput` always uses a default, offline `URLValidator`.
+- `security.NewEgressScanner` uses a default, offline `URLValidator` unless you
+  pass one that opted in with `security.WithURLValidator`.
+
+## Scope
+
+This repository is the detection engine and its baseline pattern set. It does
+not include an agent runtime, action routing, decision receipts, a hosted
+control plane or agent adapters, and nothing here depends on a hosted service.
+
+## License
+
+[Apache License 2.0](LICENSE), with [NOTICE](NOTICE). Contributions use the
+[DCO](CONTRIBUTING.md). To report a security issue, see [SECURITY.md](SECURITY.md).

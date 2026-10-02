@@ -1,0 +1,25 @@
+# benign hard-negatives for path_traversal (look like attacks, are safe)
+read src/main.go
+cp config.yaml config.yaml.bak
+git diff --cached
+https://api.github.com/repos/owner/repo
+https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js
+GET https://firestore.googleapis.com/v1/projects/myproject/databases/(default)/documents
+{"jsonrpc":"2.0","method":"resources/read","params":{"uri":"http://api.example.com/project/README.md"},"id":8}
+src="//fonts.googleapis.com/css?family=Inter"
+tar -czf backup.tgz src/
+unzip archive.zip -d output/
+node_modules/.bin/eslint
+my..file.txt
+version 1.2.3..4
+echo "C: drive is full"
+see file://README for details
+curl file:///home/user/project/index.html
+cat ../README.md
+the price is $5..$10
+git log a1b2c3..d4e5f6
+http://example.com//double/slash
+extract foo.tgz to ./build
+SELECT range FROM 1..100
+~user/projects/app
+./configure --prefix=/usr/local

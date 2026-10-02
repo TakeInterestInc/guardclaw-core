@@ -1,0 +1,23 @@
+# Binaries
+/guardclaw-scan
+*.exe
+*.test
+*.out
+
+# Build / coverage
+/dist/
+/bin/
+coverage.txt
+*.prof
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local env — never commit
+.env
+.env.*
+*.local
+_gen/

@@ -1,0 +1,60 @@
+# Benign shell commands — common developer tool calls
+# Lines starting with # are comments, skipped by corpus loader
+ls -la
+cat README.md
+git status
+git diff --cached
+git log --oneline -10
+npm install
+npm run build
+npm test
+go test ./cmd/guardclaw/
+go build ./cmd/guardclaw/
+go vet ./cmd/guardclaw/
+python3 -m pytest tests/
+pip install -r requirements.txt
+cargo build --release
+cargo test
+make build
+mkdir -p src/components
+rm -f build/*.o
+cp config.yaml config.yaml.bak
+mv old_file.go new_file.go
+touch .env.example
+chmod 644 README.md
+echo "hello world"
+grep -r "TODO" src/
+find . -name "*.go" -type f
+wc -l src/main.ts
+head -n 20 package.json
+tail -f logs/app.log
+sort package.json
+diff file_a.txt file_b.txt
+tar -czf backup.tar.gz src/
+unzip archive.zip -d output/
+gpg --list-keys
+docker build -t myapp .
+docker compose up -d
+kubectl get pods
+terraform plan
+aws s3 ls s3://my-bucket/
+gcloud run deploy guardclaw --image gcr.io/guardclaw/server
+heroku logs --tail
+brew install jq
+apt-get install -y jq
+which node
+env | grep PATH
+date +%Y-%m-%d
+uname -a
+df -h
+free -m
+ps aux | head -20
+top -l 1 -n 5
+mkdir -p src/{components,hooks,utils}
+cp file.{js,ts} dist/
+mv report.{txt,bak}
+echo {1..10}
+touch test_{a,b,c}.go
+git checkout -- src/{app,lib}
+ls dist/{css,js}/
+for f in *.{png,jpg}; do echo "$f"; done

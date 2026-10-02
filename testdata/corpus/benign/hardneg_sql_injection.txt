@@ -1,0 +1,24 @@
+# benign hard-negatives for sql_injection (look like attacks, are safe)
+SELECT * FROM users WHERE id = $1
+SELECT name, email FROM customers WHERE active = true ORDER BY name
+UPDATE users SET last_login = NOW() WHERE id = ?
+cursor.execute("SELECT * FROM logs WHERE user = %s", (username,))
+cursor.execute("INSERT INTO t VALUES (?, ?)", (a, b))
+db.execute(text("SELECT * FROM users WHERE id = :id"), {"id": uid})
+db.raw("SELECT COUNT(*) FROM orders")
+query.raw("SELECT id, name FROM products ORDER BY name")
+ORDER BY created_at DESC LIMIT 10
+type Result = Success | Failure
+# This query uses UNION SELECT to combine results
+{"price": {"$gte": 10, "$lte": 50}}
+{"age": {"$gt": 18}}
+{"score": {"$gte": 0.5}}
+{"updatedAt": {"$gte": "2024-01-01T00:00:00Z"}}
+{"filter": {"$or": [{"a": 1}, {"b": 2}]}}
+const u = db.collection.aggregate([{$group: {_id: "$dept"}}])
+I need to update the users table and select the right columns
+The select dropdown shows union membership options
+https://example.com/search?q=union+jobs+near+me
+SELECT%20name%20FROM%20users
+git diff --cached
+mkdir -p src/{components,hooks,utils}

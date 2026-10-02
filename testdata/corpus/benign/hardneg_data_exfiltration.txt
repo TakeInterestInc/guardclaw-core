@@ -1,0 +1,31 @@
+# benign hard-negatives for data_exfiltration (look like attacks, are safe)
+dig +short example.com
+nslookup api.github.com
+host google.com
+dig @1.1.1.1 cloudflare.com A
+dig MX gmail.com
+env | grep PATH
+printenv HOME
+env | sort
+printenv | grep -i node
+set | grep BASH
+cat /proc/self/status | grep VmRSS
+base64 -w0 logo.png > logo.b64
+echo "hello" | base64
+cat data.json | jq '.items'
+tar czf backup.tar.gz src/ && curl -O https://cdn.example.com/tool
+curl -F "file=@report.pdf" https://api.company.com/upload
+curl --upload-file dist.zip https://artifacts.internal.company.com/v1/
+curl -T build.tar.gz https://nexus.corp.example.com/repository/
+git remote add origin https://github.com/myorg/myrepo.git
+git push origin main
+git push https://github.com/myorg/repo.git feature-branch
+git remote set-url origin git@github.com:myorg/repo.git
+git remote add upstream https://gitlab.com/group/proj.git
+git clone https://user:pat@github.com/myorg/private.git
+curl -X POST -d @payload.json https://api.example.com/v1/events
+curl --data-urlencode "q=search term" https://api.example.com/search
+curl https://transfer.sh/get/abc/file.txt -o file.txt
+curl -d @body.json https://webhook.example.com/notify
+base64 -d cert.b64 > cert.pem
+curl -T artifact.jar https://repo.maven.apache.org/upload

