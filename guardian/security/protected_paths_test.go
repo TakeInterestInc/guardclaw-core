@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // withCaseFolding runs fn with pathCaseInsensitive forced to fold and restores
@@ -28,12 +29,12 @@ func withCaseFolding(t *testing.T, fold bool, fn func()) {
 func resetRegistry(t *testing.T) {
 	t.Helper()
 	registryMu.Lock()
-	extraProtected, extraRootMarkers = nil, nil
+	extraProtected, extraRootMarkers, extraProtectedF, extraRootMarkersF = nil, nil, nil, nil
 	extraProtectedSet, extraMarkerSet = map[string]bool{}, map[string]bool{}
 	registryMu.Unlock()
 	t.Cleanup(func() {
 		registryMu.Lock()
-		extraProtected, extraRootMarkers = nil, nil
+		extraProtected, extraRootMarkers, extraProtectedF, extraRootMarkersF = nil, nil, nil, nil
 		extraProtectedSet, extraMarkerSet = map[string]bool{}, map[string]bool{}
 		registryMu.Unlock()
 	})
@@ -366,5 +367,99 @@ func TestProtectedPathVolumesAlias(t *testing.T) {
 				t.Errorf("fold=%v: unrelated /Volumes path protected", fold)
 			}
 		})
+	}
+}
+
+// adversarialPath repeats a config suffix (and a registered marker) so that
+// a naive matcher builds one form per occurrence.
+func adversarialPath(n int) string {
+	var b strings.Builder
+	for b.Len() < n {
+		b.WriteString("/mydaemon/.mcp.json")
+	}
+	return b.String()[:n]
+}
+
+func TestProtectedPathAdversarialLengthFailsClosedFast(t *testing.T) {
+	resetRegistry(t)
+	AddProtectedPatterns([]string{"internal/policy/**"})
+	AddRootMarkers([]string{"mydaemon"})
+	c := NewDefaultWithSystemProtectedPathChecker()
+	for _, fold := range []bool{true, false} {
+		withCaseFolding(t, fold, func() {
+			for _, n := range []int{64 << 10, 20 << 10, maxProtectedPathBytes + 1} {
+				p := adversarialPath(n)
+				start := time.Now()
+				got := c.IsProtected(p)
+				elapsed := time.Since(start)
+				if !got {
+					t.Errorf("fold=%v len=%d: IsProtected = false, want true (fail closed)", fold, n)
+				}
+				if elapsed > 50*time.Millisecond {
+					t.Errorf("fold=%v len=%d: IsProtected took %v, want < 50ms", fold, n, elapsed)
+				}
+				if !c.IsProtectedOnDisk(p) {
+					t.Errorf("fold=%v len=%d: IsProtectedOnDisk = false, want true", fold, n)
+				}
+			}
+			// Under the length cap, many occurrences exceed the form cap and
+			// also fail closed.
+			p := adversarialPath(maxProtectedPathBytes)
+			start := time.Now()
+			if !c.IsProtected(p) {
+				t.Errorf("fold=%v: occurrence-heavy path under the length cap not protected", fold)
+			}
+			if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+				t.Errorf("fold=%v: occurrence-heavy 4 KiB path took %v, want < 50ms", fold, elapsed)
+			}
+		})
+	}
+	// A long ordinary path under the cap is still evaluated, not failed closed.
+	long := "/home/a/" + strings.Repeat("dir/", (maxProtectedPathBytes-20)/4) + "f.go"
+	if len(long) > maxProtectedPathBytes {
+		long = long[len(long)-maxProtectedPathBytes:]
+	}
+	start := time.Now()
+	if c.IsProtected(long) {
+		t.Errorf("ordinary %d-byte path protected", len(long))
+	}
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Errorf("ordinary %d-byte path took %v, want < 50ms", len(long), elapsed)
+	}
+}
+
+func BenchmarkIsProtectedAdversarial64KiB(b *testing.B) {
+	c := NewDefaultWithSystemProtectedPathChecker()
+	p := adversarialPath(64 << 10)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = c.IsProtected(p)
+	}
+}
+
+func BenchmarkIsProtectedAdversarial4KiB(b *testing.B) {
+	AddRootMarkers([]string{"mydaemon"})
+	c := NewDefaultWithSystemProtectedPathChecker()
+	p := adversarialPath(maxProtectedPathBytes)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = c.IsProtected(p)
+	}
+}
+
+func BenchmarkIsProtectedOrdinary4KiB(b *testing.B) {
+	c := NewDefaultWithSystemProtectedPathChecker()
+	p := "/home/a/" + strings.Repeat("dir/", 1000) + "f.go"
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = c.IsProtected(p)
+	}
+}
+
+func BenchmarkIsProtectedTypical(b *testing.B) {
+	c := NewDefaultWithSystemProtectedPathChecker()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = c.IsProtected("/Users/a/projects/web/src/components/Button.tsx")
 	}
 }

@@ -148,9 +148,22 @@ var macOSRootAliases = []struct{ prefix, replacement string }{
 var (
 	registryMu        sync.RWMutex
 	extraProtected    []string
+	extraProtectedF   []string // extraProtected, case-folded once at registration
 	extraRootMarkers  []string
+	extraRootMarkersF []string // extraRootMarkers, case-folded once
 	extraProtectedSet = map[string]bool{}
 	extraMarkerSet    = map[string]bool{}
+)
+
+const (
+	// maxProtectedPathBytes bounds the path length IsProtected evaluates.
+	// Longer paths are treated as protected (fail closed): no real file path
+	// needs more (PATH_MAX is 4096 on Linux, 1024 on macOS).
+	maxProtectedPathBytes = 4096
+	// maxProtectedPathForms bounds how many forms of one path are matched
+	// (see pathForms). A path with more root-marker or config-suffix
+	// occurrences than that is treated as protected (fail closed).
+	maxProtectedPathForms = 16
 )
 
 // AddProtectedPatterns registers additional glob patterns that every checker
@@ -175,6 +188,7 @@ func AddProtectedPatterns(patterns []string) {
 		}
 		extraProtectedSet[p] = true
 		extraProtected = append(extraProtected, p)
+		extraProtectedF = append(extraProtectedF, foldCase(p))
 	}
 }
 
@@ -199,6 +213,7 @@ func AddRootMarkers(markers []string) {
 		}
 		extraMarkerSet[m] = true
 		extraRootMarkers = append(extraRootMarkers, m)
+		extraRootMarkersF = append(extraRootMarkersF, foldCase(m))
 	}
 }
 
@@ -208,10 +223,32 @@ func registeredPatterns() []string {
 	return append([]string(nil), extraProtected...)
 }
 
+// registeredPatternsFor returns the registered patterns, case-folded when
+// fold is set. The returned slice must not be modified.
+func registeredPatternsFor(fold bool) []string {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	if fold {
+		return extraProtectedF
+	}
+	return extraProtected
+}
+
 func registeredRootMarkers() []string {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 	return append([]string(nil), extraRootMarkers...)
+}
+
+// registeredRootMarkersFor returns the root markers, case-folded when fold is
+// set. The returned slice must not be modified.
+func registeredRootMarkersFor(fold bool) []string {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	if fold {
+		return extraRootMarkersF
+	}
+	return extraRootMarkers
 }
 
 // ProtectedPathChecker determines whether a file path belongs to a protected
@@ -219,6 +256,10 @@ func registeredRootMarkers() []string {
 // (any depth) and * (single segment wildcard).
 type ProtectedPathChecker struct {
 	patterns []string
+	// parts and foldedParts are patterns (and their case folds) split into
+	// segments once at construction.
+	parts       [][]string
+	foldedParts [][]string
 	// withRegistered adds the AddProtectedPatterns registry at match time.
 	withRegistered bool
 }
@@ -233,7 +274,13 @@ func NewProtectedPathChecker(patterns []string) *ProtectedPathChecker {
 			clean = append(clean, p)
 		}
 	}
-	return &ProtectedPathChecker{patterns: clean}
+	parts := make([][]string, len(clean))
+	foldedParts := make([][]string, len(clean))
+	for i, p := range clean {
+		parts[i] = strings.Split(p, "/")
+		foldedParts[i] = strings.Split(foldCase(p), "/")
+	}
+	return &ProtectedPathChecker{patterns: clean, parts: parts, foldedParts: foldedParts}
 }
 
 // NewDefaultProtectedPathChecker creates a checker with DefaultProtectedPaths
@@ -274,6 +321,9 @@ func NewDefaultWithSystemProtectedPathChecker() *ProtectedPathChecker {
 // marker, and the part from every occurrence of a config-critical suffix such
 // as /.mcp.json, so agent configuration is protected in any project directory.
 func (p *ProtectedPathChecker) IsProtected(path string) bool {
+	if len(path) > maxProtectedPathBytes {
+		return true // fail closed; see maxProtectedPathBytes
+	}
 	clean := cleanPath(path)
 	if clean == "" || clean == "." || clean == "/" {
 		return false
@@ -284,19 +334,28 @@ func (p *ProtectedPathChecker) IsProtected(path string) bool {
 	}
 	clean = canonicalRoot(clean, fold)
 
-	patterns := p.patterns
-	if p.withRegistered {
-		if extra := registeredPatterns(); len(extra) > 0 {
-			patterns = append(append([]string(nil), p.patterns...), extra...)
-		}
+	forms, overflow := pathForms(clean, fold)
+	if overflow {
+		return true // fail closed; see maxProtectedPathForms
 	}
 
-	for _, form := range pathForms(clean, fold) {
-		for _, pattern := range patterns {
-			if fold {
-				pattern = foldCase(pattern)
+	own := p.parts
+	if fold {
+		own = p.foldedParts
+	}
+	var extra []string
+	if p.withRegistered {
+		extra = registeredPatternsFor(fold)
+	}
+	for _, form := range forms {
+		formParts := strings.Split(form, "/")
+		for _, pattern := range own {
+			if matchParts(pattern, formParts) {
+				return true
 			}
-			if matchGlob(pattern, form) {
+		}
+		for _, pattern := range extra {
+			if matchParts(strings.Split(pattern, "/"), formParts) {
 				return true
 			}
 		}
@@ -347,6 +406,15 @@ var configCriticalSuffixes = []string{
 	"/.mcp.json",
 	"/.guardclaw/",
 }
+
+// configCriticalSuffixesFolded is configCriticalSuffixes, case-folded once.
+var configCriticalSuffixesFolded = func() []string {
+	out := make([]string, len(configCriticalSuffixes))
+	for i, s := range configCriticalSuffixes {
+		out[i] = foldCase(s)
+	}
+	return out
+}()
 
 // cleanPath trims, converts separators to forward slashes, normalizes
 // Windows-equivalent segment spellings and collapses . and .. segments.
@@ -480,11 +548,12 @@ func macOSCase(lower string) string {
 }
 
 // pathForms returns the distinct forms of a cleaned path that patterns are
-// matched against. See IsProtected.
-func pathForms(clean string, fold bool) []string {
-	forms := []string{clean}
+// matched against (see IsProtected). overflow is true when the path has more
+// forms than maxProtectedPathForms; the caller fails closed.
+func pathForms(clean string, fold bool) (forms []string, overflow bool) {
+	forms = []string{clean}
 	add := func(f string) {
-		if f == "" {
+		if f == "" || overflow {
 			return
 		}
 		for _, existing := range forms {
@@ -492,46 +561,48 @@ func pathForms(clean string, fold bool) []string {
 				return
 			}
 		}
+		if len(forms) >= maxProtectedPathForms {
+			overflow = true
+			return
+		}
 		forms = append(forms, f)
 	}
 
 	rooted := clean
 	if strings.HasPrefix(clean, "/") {
 		add(strings.TrimPrefix(clean, "/"))
-		for _, marker := range registeredRootMarkers() {
-			if fold {
-				marker = foldCase(marker)
-			}
+		for _, marker := range registeredRootMarkersFor(fold) {
 			for _, idx := range indexAll(clean, marker) {
 				add(clean[idx+len(marker):])
+				if overflow {
+					return nil, true
+				}
 			}
 		}
 	} else {
 		rooted = "/" + clean
 	}
 
-	for _, suffix := range configCriticalSuffixes {
-		if fold {
-			suffix = foldCase(suffix)
-		}
+	suffixes := configCriticalSuffixes
+	if fold {
+		suffixes = configCriticalSuffixesFolded
+	}
+	for _, suffix := range suffixes {
 		for _, idx := range indexAll(rooted, suffix) {
 			add(rooted[idx+1:])
+			if overflow {
+				return nil, true
+			}
 		}
 	}
-	return forms
+	return forms, overflow
 }
 
-// matchGlob matches a pattern against a path. It supports:
+// matchParts matches a pattern against a path, both split on "/". It
+// supports:
 //   - * matches any non-separator characters in a single path segment
 //   - ** matches zero or more path segments (recursive)
 //   - ? matches a single non-separator character
-func matchGlob(pattern, path string) bool {
-	// Split both into segments.
-	patParts := strings.Split(pattern, "/")
-	pathParts := strings.Split(path, "/")
-	return matchParts(patParts, pathParts)
-}
-
 func matchParts(pattern, path []string) bool {
 	pi, pj := 0, 0
 	for pi < len(pattern) && pj < len(path) {
