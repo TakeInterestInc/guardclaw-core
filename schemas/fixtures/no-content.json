@@ -1,0 +1,27 @@
+{
+  "schema_version": "guardclaw.scan-report.v1",
+  "engine": {
+    "module": "github.com/TakeInterestInc/guardclaw-core",
+    "baseline_tree": "336faa083fccb78a098cf2cf146df3e4d50c1d82",
+    "mode": "static_line_scan"
+  },
+  "subject": {
+    "snapshot_id": "00000000-0000-4000-8000-000000000001",
+    "revision": 7
+  },
+  "started_at": "2026-10-02T00:00:00Z",
+  "finished_at": "2026-10-02T00:00:01Z",
+  "status": "no_content",
+  "outcome": "unknown",
+  "coverage": {
+    "mode": "all_nonblank_lines_including_comments",
+    "input_bytes": 0,
+    "total_lines": 0,
+    "scanned_lines": 0,
+    "blank_lines": 0
+  },
+  "findings": [],
+  "error": {
+    "code": "NO_CONTENT"
+  }
+}

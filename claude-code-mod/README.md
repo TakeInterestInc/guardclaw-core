@@ -1,5 +1,13 @@
 # GuardClaw for Claude Code (mod)
 
+This is the legacy mod adapter. It has a deny counter and transcript messages,
+not the personal policy or chained receipts in the new
+[command-hook adapter](../docs/SETUP.md). Its lexical checks do not prove
+arbitrary-shell containment or scanner executable authenticity. Read the
+[supported-host limits](../docs/CAPABILITIES.md) before choosing a setup.
+Do not assume combining both adapters makes settings hooks authoritative over
+tool-approving mods.
+
 A deny-only guard that runs inside Claude Code as a mod: a plugin of function
 hooks (Claude Code 2.1.287 and later, early access). Every shell command the
 model asks to run is judged by the GuardClaw Go engine, credential and

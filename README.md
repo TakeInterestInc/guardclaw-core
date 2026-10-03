@@ -1,4 +1,53 @@
-# GuardClaw Core
+# GuardClaw
+
+A local workspace for protection checks, mediated action receipts and progress
+visibility. One checkout, one setup. The name is provisional; the repository URL
+and Go module remain `TakeInterestInc/guardclaw-core`.
+
+```sh
+git clone https://github.com/TakeInterestInc/guardclaw-core.git
+cd guardclaw-core
+npm run setup
+npm start
+```
+
+Requires installed Node.js 20+ and Go 1.26.6+. Setup builds three local tools and
+runs a disposable synthetic smoke test; it never changes host settings, connects
+accounts or executes test tool calls. Uncached Go builds may need dependencies.
+Open **http://127.0.0.1:4317**. Stop with Ctrl+C. No runtime package install,
+telemetry or account is needed. The default workspace is offline with authored
+synthetic data; do not expose its loopback listener through a tunnel or proxy.
+
+- **Checks:** Data & safety prepares an explicit local report command using
+  `bin/guardclaw-report`; the browser never runs it. Advisory reports stay
+  unverified and never authorize work.
+- **Receipts:** Data & safety opens a deliberately selected metadata-only journal
+  and optional owner-retained checkpoint. Hash consistency is separate from
+  writer authenticity, execution proof and complete coverage.
+- **Progress:** Owner decisions, All work and Evidence compare public-safe
+  producer claims, timestamps and blockers. `npm run start:live` enables an
+  explicit per-launch capability connection; `npm run demo:agent` publishes
+  synthetic summaries only. No official dots/Cowork connector is included.
+- **Host protection:** ask a coding agent to read [AGENTS.md](AGENTS.md) and
+  [SETUP](docs/SETUP.md), identify your host/tool boundary, and prepare a concrete
+  policy/settings preview. Owner approval is required before applying host
+  configuration. Claude command hooks are the receipt-backed supported path;
+  Codex/cloud/Cowork coverage is limited to documented native approvals.
+
+`npm run build`, `npm run smoke` and `npm test` are repeatable local commands.
+Optional installed-browser QA uses `npm run test:ui`, `test:scanner-ui`,
+`test:live-ui` and `test:receipts-ui`. Go checks: `go vet ./...` and
+`go test -race ./...`. [Undo](docs/SETUP.md#5-uninstall-or-roll-back): remove
+reviewed host handlers before `npm run clean`, which removes only built binaries.
+Policies, receipts/checkpoints and live spool remain yours to review and retain.
+
+[Architecture decision](docs/CONSOLIDATION.md), [host capabilities](docs/CAPABILITIES.md),
+[receipt limits](docs/RECEIPTS.md), [dashboard boundaries](observatory/docs/ARCHITECTURE.md),
+[licenses and provenance](observatory/docs/THIRD_PARTY.md). Both source histories
+are retained; the previous Dot repository remains untouched as a compatibility
+source. The legacy Claude mod remains under its original path and limitations.
+
+## Detection library and original CLI
 
 A Go detection library and CLI for known attack patterns in the inputs an AI
 agent is about to act on: a tool call, a shell command, a prompt, an MCP
@@ -15,6 +64,26 @@ input ──▶ Bloom filter ──▶ Aho-Corasick ──▶ composite RE2 ─�
 No LLM in the detection path, no telemetry, and no network calls by default.
 The one place that can resolve DNS is `security.URLValidator`, and only after
 you opt in (see [Network behavior](#network-behavior)).
+
+## Start with your agent (first draft)
+
+Give Claude Code, Codex or Cowork the checkout and ask it to read
+[AGENTS.md](AGENTS.md). It will find a [small setup workflow](docs/SETUP.md),
+[the supported-host matrix](docs/CAPABILITIES.md), and an
+[exact-tool personal policy template](examples/personal-policy.json).
+
+The new offline `guardclaw-hook` adapter supports Claude Code command hooks on
+macOS/Linux. It requests real host approval for configured send tools, adds
+known-pattern/protected-file checks, and writes [metadata-only chained receipts](docs/RECEIPTS.md)
+for each event it handles. Setup prints a preview; it never installs settings.
+Synthetic tests are not live integration certification. Keep native permissions:
+host hook timeouts/startup failures can leave the normal permission path active.
+
+Codex, cloud dots and Cowork have different boundaries. Their native approval
+setup is documented; this repository does not install a receipt-backed adapter
+for them. The [legacy Claude mod](claude-code-mod/README.md) has no personal
+policy or these receipts. Neither adapter is an arbitrary-shell containment
+sandbox. We will share improvements as this draft develops.
 
 ## Install
 
@@ -134,9 +203,12 @@ non-`allow` decision. See [CONTRIBUTING.md](CONTRIBUTING.md) and the
 
 ## Scope
 
-This repository is the detection engine and its baseline pattern set. It does
-not include an agent runtime, action routing, decision receipts, a hosted
-control plane or agent adapters, and nothing here depends on a hosted service.
+This repository contains the detection engine, baseline patterns, a legacy
+Claude Code mod, and the bounded offline Claude command-hook/personal-policy/
+receipt adapter described above. It does not include an agent runtime, generic
+action proxy, hosted control plane, account integration or cloud installer.
+Nothing here depends on a hosted service. Pattern no-match, instructions and
+plain receipt hashes provide neither complete protection nor writer authenticity.
 
 ## License
 

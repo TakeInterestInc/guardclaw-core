@@ -1,0 +1,24 @@
+{
+  "name": "guardclaw",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Local protection checks, mediated receipts and progress visibility",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "setup": "node tools/guardclaw.mjs setup",
+    "build": "node tools/guardclaw.mjs build",
+    "start": "node tools/guardclaw.mjs start",
+    "start:live": "node tools/guardclaw.mjs start --live",
+    "demo:agent": "node observatory/tools/synthetic-agent.mjs",
+    "smoke": "node tools/smoke.mjs",
+    "clean": "node tools/guardclaw.mjs clean",
+    "test": "node --test observatory/tests/*.test.mjs tests/*.test.mjs",
+    "test:ui": "node observatory/tests/browser.mjs",
+    "test:scanner-ui": "node observatory/tests/guardclaw-browser.mjs",
+    "test:live-ui": "node observatory/tests/local-feed-browser.mjs",
+    "test:receipts-ui": "node tests/receipts-browser.mjs"
+  }
+}

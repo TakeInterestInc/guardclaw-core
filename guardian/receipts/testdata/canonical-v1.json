@@ -1,0 +1,46 @@
+[
+  {
+    "name": "ascii",
+    "record": {
+      "schema": "guardclaw.receipt.v1",
+      "chain_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sequence": 1,
+      "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "timestamp": "2026-10-03T08:00:00Z",
+      "host": "claude-code",
+      "event": "decision",
+      "action_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "tool": "mcp__example__send_email",
+      "decision": "ask",
+      "rule": "personal_policy",
+      "outcome": "pending",
+      "redaction": "metadata-only.v1",
+      "hash": "9dffa32c8ace4e38ee4a06815541308ee132b77792d456a283ac6ae439e9e16c"
+    },
+    "canonical_without_hash": "{\"action_id\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"chain_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"decision\":\"ask\",\"event\":\"decision\",\"host\":\"claude-code\",\"outcome\":\"pending\",\"prev_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"redaction\":\"metadata-only.v1\",\"rule\":\"personal_policy\",\"schema\":\"guardclaw.receipt.v1\",\"sequence\":1,\"timestamp\":\"2026-10-03T08:00:00Z\",\"tool\":\"mcp__example__send_email\"}",
+    "sha256": "9dffa32c8ace4e38ee4a06815541308ee132b77792d456a283ac6ae439e9e16c",
+    "valid_record": true
+  },
+  {
+    "name": "escaping-unicode-invalid-metadata",
+    "record": {
+      "schema": "guardclaw.receipt.v1",
+      "chain_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sequence": 1,
+      "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "timestamp": "2026-10-03T08:00:00Z",
+      "host": "claude-code",
+      "event": "decision",
+      "action_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "tool": "café漢字<&>\"\\\n\t  ",
+      "decision": "ask",
+      "rule": "personal_policy",
+      "outcome": "pending",
+      "redaction": "metadata-only.v1",
+      "hash": "f819bd49bf024ce8a4d0e316db3816c76ef4914d78a12440d4ec6d406d726882"
+    },
+    "canonical_without_hash": "{\"action_id\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"chain_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"decision\":\"ask\",\"event\":\"decision\",\"host\":\"claude-code\",\"outcome\":\"pending\",\"prev_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"redaction\":\"metadata-only.v1\",\"rule\":\"personal_policy\",\"schema\":\"guardclaw.receipt.v1\",\"sequence\":1,\"timestamp\":\"2026-10-03T08:00:00Z\",\"tool\":\"café漢字\\u003c\\u0026\\u003e\\\"\\\\\\n\\t\\u2028\\u2029\"}",
+    "sha256": "f819bd49bf024ce8a4d0e316db3816c76ef4914d78a12440d4ec6d406d726882",
+    "valid_record": false
+  }
+]

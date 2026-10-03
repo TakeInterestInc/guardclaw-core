@@ -1,0 +1,2 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {setupEvent} from '../tools/adoption.mjs';
+test('Adoption proposal is disabled by default and has no personal fields',()=>{assert.equal(setupEvent({version:'0.2.0'}),null);assert.deepEqual(setupEvent({enabled:true,version:'0.2.0',path:'/private/synthetic',user:'synthetic'}),{schema:'guardclaw.usage.v1',event:'setup_succeeded',version:'0.2.0'});for(const version of ['/private/path','user@example.invalid','0.2.0\n'])assert.throws(()=>setupEvent({enabled:true,version}));});

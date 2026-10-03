@@ -1,0 +1,90 @@
+{
+  "purpose": "Synthetic contract fixtures; not scanner results or product tests. Structural then semantic then context validation.",
+  "attachment_context": {
+    "snapshot_id": "00000000-0000-4000-8000-000000000001",
+    "revision": 7
+  },
+  "cases": [
+    {
+      "file": "fixtures/complete-no-match.json",
+      "expected": "accept",
+      "note": "Synthetic report example, not observed scanner output.",
+      "helper_exit": 0
+    },
+    {
+      "file": "fixtures/complete-review.json",
+      "expected": "accept",
+      "note": "Exit 1 is a valid importable findings report.",
+      "helper_exit": 1
+    },
+    {
+      "file": "fixtures/actual-at-sign-ids.json",
+      "expected": "accept",
+      "note": "Exact actual Core identifiers; do not use an invented alphanumeric-only regex.",
+      "helper_exit": 1
+    },
+    {
+      "file": "fixtures/no-content.json",
+      "expected": "accept",
+      "note": "",
+      "helper_exit": 2
+    },
+    {
+      "file": "fixtures/failed-timeout.json",
+      "expected": "accept",
+      "note": "Only emitted if possible without delaying process termination.",
+      "helper_exit": 2
+    },
+    {
+      "file": "fixtures/failed-invalid-metadata.json",
+      "expected": "accept_unattached",
+      "note": "Valid error report only; subject=null forbids attachment to any snapshot. Show a standalone import/scan error.",
+      "helper_exit": 2
+    },
+    {
+      "file": "fixtures/unsafe-revision.json",
+      "expected": "reject_structure",
+      "note": "Outside shared Go/JS safe-integer range."
+    },
+    {
+      "file": "fixtures/extra-content-field.json",
+      "expected": "reject_structure",
+      "note": "Unknown keys cannot carry source content."
+    },
+    {
+      "file": "fixtures/unknown-id.json",
+      "expected": "reject_structure",
+      "note": "No arbitrary UI string from a report."
+    },
+    {
+      "file": "fixtures/inconsistent-counts.json",
+      "expected": "reject_semantic",
+      "note": "scanned != total minus blank."
+    },
+    {
+      "file": "fixtures/reversed-times.json",
+      "expected": "reject_semantic",
+      "note": "Finish precedes start."
+    },
+    {
+      "file": "fixtures/duplicate-finding-line.json",
+      "expected": "reject_semantic",
+      "note": "Exactly one aggregated finding per scanned line."
+    },
+    {
+      "file": "fixtures/earlier-revision.json",
+      "expected": "accept_but_not_current",
+      "note": "Against attachment context revision 7: earlier evidence only."
+    },
+    {
+      "file": "fixtures/other-snapshot.json",
+      "expected": "reject_attachment",
+      "note": "Against attachment context UUID ending 0001: no current attachment."
+    },
+    {
+      "file": "fixtures/duplicate-key.json",
+      "expected": "reject_parse",
+      "note": "Reject duplicate keys before ordinary JSON object parsing."
+    }
+  ]
+}
