@@ -300,3 +300,31 @@ func TestParserEdgesAndNoAuthority(t *testing.T) {
 		t.Fatal("forged report certified")
 	}
 }
+
+func TestConsolidatedBaselineScopesNewID(t *testing.T) {
+	current, err := registrySetFor(BaselineTree)
+	if err != nil || !current["pipe_shell_wrapped"] {
+		t.Fatal("current ID omitted")
+	}
+	legacy, err := registrySetFor(LegacyBaselineTree)
+	if err != nil || legacy["pipe_shell_wrapped"] {
+		t.Fatal("new ID accepted as legacy")
+	}
+	b, err := os.ReadFile(filepath.Join("..", "..", "schemas", "fixtures", "complete-review.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r Report
+	if err := json.Unmarshal(b, &r); err != nil {
+		t.Fatal(err)
+	}
+	r.Engine.BaselineTree = BaselineTree
+	r.Findings[0].PatternIDs = []string{"pipe_shell_wrapped"}
+	if err := Validate(r); err != nil {
+		t.Fatal(err)
+	}
+	r.Engine.BaselineTree = LegacyBaselineTree
+	if err := Validate(r); err == nil {
+		t.Fatal("legacy validator accepted new ID")
+	}
+}

@@ -19,7 +19,7 @@ function validTimestamp(s){
  return Number.isFinite(date.getTime())&&date.toISOString().replace('.000Z','Z')===base;
 }
 function valid(r){
- return r&&Object.keys(r).sort().join()===keys.join()&&r.schema==='guardclaw.receipt.v1'&&id.test(r.chain_id)&&hex.test(r.hash)&&hex.test(r.prev_hash)&&
+ return r&&Object.keys(r).sort().join()===keys.join()&&keys.filter(k=>k!=='sequence').every(k=>typeof r[k]==='string')&&r.schema==='guardclaw.receipt.v1'&&id.test(r.chain_id)&&hex.test(r.hash)&&hex.test(r.prev_hash)&&
  Number.isSafeInteger(r.sequence)&&r.sequence>0&&validTimestamp(r.timestamp)&&name.test(r.host)&&name.test(r.rule)&&name.test(r.tool)&&
  (id.test(r.action_id)||hex.test(r.action_id))&&r.redaction==='metadata-only.v1'&&
  ((r.event==='decision'&&['allow','deny','ask'].includes(r.decision)&&r.outcome==='pending')||(r.event==='completion'&&r.decision==='none'&&['success','failure'].includes(r.outcome)));

@@ -2,3 +2,5 @@ import test from 'node:test';import assert from 'node:assert/strict';import {rea
 test('Browser generated registry matches the single root contract',async()=>{const r=JSON.parse(await readFile(new URL('../schemas/guardclaw-pattern-ids.v1.json',import.meta.url)));assert.equal(BASELINE_TREE,r.baseline_tree);assert.deepEqual(PATTERN_IDS,r.pattern_ids);});
 
 test('Legacy report IDs remain exactly compatible with original contract',async()=>{const r=JSON.parse(await readFile(new URL('../schemas/guardclaw-pattern-ids.legacy.v1.json',import.meta.url)));assert.equal(LEGACY_BASELINE_TREE,r.baseline_tree);assert.deepEqual(LEGACY_PATTERN_IDS,r.pattern_ids);});
+
+test('New canonical engine IDs cannot be declared as legacy engine output',async()=>{const {validateReport}=await import('../observatory/src/guardclaw-report.mjs');const r=JSON.parse(await readFile(new URL('../schemas/fixtures/complete-review.json',import.meta.url)));r.findings[0].pattern_ids=['pipe_shell_wrapped'];r.engine.baseline_tree=BASELINE_TREE;assert.doesNotThrow(()=>validateReport(r));r.engine.baseline_tree=LEGACY_BASELINE_TREE;assert.throws(()=>validateReport(r));});
