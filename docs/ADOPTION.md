@@ -18,3 +18,9 @@ endpoint, retention/aggregation policy and a concrete consent preview. Each user
 must choose it explicitly; refusing must preserve full functionality. No prompt,
 command, host identity, project/private path, tool name, account, credential,
 receipt or snapshot data belongs in a usage event. Offline remains the default.
+
+GitHub reference: [repository traffic](https://docs.github.com/en/repositories/viewing-activity-and-data-for-your-repository/viewing-traffic-to-a-repository)
+provides full clones and visitors for the past 14 days to users with push access;
+record the window with each observation. [Release asset API](https://docs.github.com/en/rest/releases/assets)
+exposes `download_count` for individual assets. These aggregate signals still
+do not establish verified active users. No metrics were collected during setup.
