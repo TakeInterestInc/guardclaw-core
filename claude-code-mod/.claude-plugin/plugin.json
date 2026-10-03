@@ -1,6 +1,6 @@
 {
   "name": "guardclaw",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "GuardClaw guard for Claude Code: runs every shell command the model asks for through the GuardClaw Go engine (guardclaw-scan) and denies what it flags, protects credential and settings files from the file tools, and refuses other mods that could approve tool calls. Deny-only and fail-closed.",
   "author": {
     "name": "TakeInterest Inc."
@@ -28,6 +28,16 @@
       "title": "Mods allowed to hook tool approval",
       "description": "Exact name@marketplace ids of mods that may load even though they hook tool approval (tool.call, tool.check, session.append, classic.PreToolUse, classic.PermissionRequest, config.set), answer the guard's own calls (process.run, process.spawn, fs.stat, env.get), or call process.run, process.spawn, fs.write, config.set, tool.call, http.fetch or env.set. A bare name or a name@inline id (a --plugin-dir folder) is never matched.",
       "default": []
+    },
+    "trustedMarketplaces": {
+      "type": "string",
+      "multiple": true,
+      "title": "Trusted marketplaces",
+      "description": "Marketplaces whose mods load even when they use the risky events or calls: the part after @ in a mod's provenance. builtin is the plugins bundled in Claude Code; claude-plugins-official is Anthropic's own marketplace. inline (a --plugin-dir folder) is ignored here. Remove an entry to hold that marketplace to the same rule as every other.",
+      "default": [
+        "builtin",
+        "claude-plugins-official"
+      ]
     },
     "extraDenyPatterns": {
       "type": "string",

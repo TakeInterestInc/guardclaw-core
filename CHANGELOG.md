@@ -9,11 +9,17 @@ what changes between source releases.
 
 - `claude-code-mod/` is GuardClaw as a Claude Code mod (2.1.287+). It is a
   thin adapter: every shell command the model asks for is judged by
-  `guardclaw-scan --stdin-command`, and it degrades to a strict JavaScript gate
+  `guardclaw-scan --stdin-command --agent`, and it degrades to a strict JavaScript gate
   when the scanner is missing. See `claude-code-mod/README.md`.
 - `guardclaw-scan --stdin-command` reads one command on standard input, runs
   `CheckCommandInjection` on it as written and after `NormalizeInput`, prints
   one JSON line and exits 1 (deny), 0 (allow) or 2 (not scanned).
+- `security.CheckAgentCommand` and `guardclaw-scan --stdin-command --agent`:
+  chaining and substitution no longer deny on their own; the command is split
+  the way a shell splits it, wrappers are opened, and each simple command is
+  judged. `rm_rf_dot` is replaced there by a precise check (`./build` passes,
+  `.` and `*` do not). `CheckCommandInjection` and the strict mode are
+  unchanged.
 - New command pattern `pipe_shell_wrapped`: a pipe into a shell spelled by
   path (`| /bin/bash`), behind a wrapper (`| sudo -E bash`, `| env bash`) or
   with stderr merged (`|& sh`). `pipe_shell` missed all three.

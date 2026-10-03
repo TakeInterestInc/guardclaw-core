@@ -5,7 +5,7 @@
 // functions: no `$`, no I/O, so they run the same inside a hook and inside a
 // test.
 //
-// Shell commands are judged by the Go engine (guardclaw-scan --stdin-command,
+// Shell commands are judged by the Go engine (guardclaw-scan --stdin-command --agent,
 // run through $.process.run by register.ts). The command rules below are a
 // hand-port of part of guardian/security/command_injection.go and are NOT the
 // decision: they run first as a cheap backstop, and they are all that stands
@@ -351,4 +351,19 @@ export function commandStringsOf(e: Readonly<Record<string, unknown>>): string[]
     if (typeof v === 'string') out.push(v)
   }
   return out
+}
+
+/** Marketplaces trusted by default: the plugins bundled in Claude Code, and Anthropic's own marketplace. */
+export const DEFAULT_TRUSTED_MARKETPLACES: readonly string[] = ['builtin', 'claude-plugins-official']
+
+/**
+ * The trusted marketplace a provenance (`name@marketplace`) comes from, if
+ * any. `inline` is never trusted: a --plugin-dir folder names itself.
+ */
+export function trustedMarketplaceOf(provenance: string, trusted: readonly string[]): string | undefined {
+  const at = provenance.lastIndexOf('@')
+  if (at <= 0 || at === provenance.length - 1) return undefined
+  const marketplace = provenance.slice(at + 1)
+  if (marketplace === 'inline') return undefined
+  return trusted.includes(marketplace) ? marketplace : undefined
 }

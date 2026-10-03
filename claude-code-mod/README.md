@@ -12,7 +12,7 @@ approve tool calls are refused before they load.
         v
  +-------------------------------+  shell command on stdin, no shell  +------------------------------+
  | guardclaw (prependPlugins)    |----------------------------------->| guardclaw-scan               |
- |  - file paths checked in JS   |<-----------------------------------|  --stdin-command (Go engine) |
+ |  - file paths checked in JS   |<-----------------------------------|  --stdin-command --agent     |
  +-------------------------------+  exit 1 deny, 0 allow, else deny   +------------------------------+
         | next(e): allowed                  deny -> the model gets the reason as an error result
         v
@@ -44,14 +44,14 @@ For `Bash`, `Monitor`, any tool whose input has a string `command`, and an MCP
 tool's `command`, `cmd`, `script` or `code` argument, the mod runs
 
 ```
-guardclaw-scan --stdin-command
+guardclaw-scan --stdin-command --agent
 ```
 
 through `$.process.run` with the command on standard input and no shell in
-between. The scanner runs `CheckCommandInjection` from
-`guardian/security/command_injection.go` on the command as written and again
-after `NormalizeInput` (NFKC, homoglyph and zero-width folding), and prints one
-JSON line.
+between. The scanner runs `CheckAgentCommand` from
+`guardian/security/agent_command.go` on the command as written and again after
+`NormalizeInput` (NFKC, homoglyph and zero-width folding), and prints one JSON
+line.
 
 | Scanner result | What the mod does |
 |---|---|
@@ -66,15 +66,36 @@ the engine runs as a process rather than inside the mod.
 A JavaScript backstop (`hooks/rules.ts`, a partial hand-port of the Go rules)
 runs first and can only add denies. Your `extraDenyPatterns` run there too.
 
-**The engine is strict.** It is the same engine as the daemon and it denies
-command chaining and substitution, which coding sessions use. Measured with
-the scanner built from this repo: `cd src && npm test` (`and_chain`),
-`npm run build 2>&1 | tail -20` (`background_chain`), `echo $(date)`
-(`dollar_paren_subst`), `rm -rf ./build` (`rm_rf_dot`), `rm -rf /tmp/x`
-(`rm_rf_root`) and `git diff > /tmp/p.diff` (`redirect_tmp`) are all denied.
-`ls`, `git status`, `npm test`, `go test ./...`, `git log --oneline | head -5`
-and `python3 -m pytest` pass. Tuning the engine is a change to the Go rules,
-in one place, for the daemon and the mod alike.
+### Agent mode
+
+Without `--agent` the scanner is strict (`CheckCommandInjection`): chaining
+(`&&`, `;`, `|`, `&`) and substitution (`$( )`, backticks) deny on their own,
+so `cd src && npm test` and `echo $(date)` are blocked. That stays the default
+for untrusted input. `--agent` keeps every other rule and looks inside
+instead:
+
+- The whole line is matched against every pattern in a deny category
+  (destructive, pipe into a shell or interpreter, data exfiltration), every
+  non-structural pattern at full severity, and the self-protection check. A
+  download inside a substitution (`$(curl ...)`) still denies.
+- The line is then split the way a shell splits it (the self-protection
+  parser), wrappers are opened (`sh -c`, `bash -c`, `eval`, `su -c`,
+  `watch`, `xargs`, `find -exec`, `sudo`, `env`, `nice`, `$( )`, backticks,
+  subshells, `if`/`then`) and every simple command inside is judged on its
+  own, quotes resolved.
+- `rm_rf_dot` is replaced by a precise check: a recursive `rm` of `.`, `./`,
+  `..`, `*`, `~`, `/`, a home folder or a folder at its top, or a home dot
+  folder denies; `./build` and `dist/` do not. `rm_rf_root` and `rm_rf_home`
+  are unchanged, so `rm -rf /tmp/x` is still denied.
+- `xargs` into a shell or interpreter denies (`ls | xargs bash`); `xargs wc
+  -l` does not. `find` with `-delete` or an exec'd `rm` over `/`, `~` or a
+  system folder denies, and so does `.` with no `-name`/`-path` filter.
+
+Allowed in agent mode, measured: `cd src && npm test`, `go test ./... 2>&1 |
+tail`, `echo $(date)`, `rm -rf ./build`, `make && make test`, `ls | grep x`,
+`npm ci && npm test`, `git ls-files | xargs wc -l`, `npm test | tee test.log`.
+Denied: the whole review corpus, plus a download piped to a shell after a
+`cd`, and a credential file sent to the network from inside `$( )`.
 
 ### Install the scanner
 
@@ -141,12 +162,18 @@ its scanned `uses` show any of:
   run programs, write files, change settings, act as the model or repoint
   `PATH`).
 
-The reason is logged to the transcript. To load one you trust, add its exact
-`name@marketplace` provenance to `allowMods`. A bare name and a
-`name@inline` id (a `--plugin-dir` folder, whose name is whatever its own
-`plugin.json` says) never match. This is strict on purpose, and it refuses some
-well-known plugins (any that hook `tool.call` or call `fs.write`, for
-example) until you allowlist them.
+Two ways through, both read from the mod's provenance:
+
+- **Trusted marketplaces** (`trustedMarketplaces`, default `builtin` and
+  `claude-plugins-official`, Anthropic's own marketplace): any mod from one
+  of them loads. Remove an entry to hold that marketplace to the same rule.
+- **`allowMods`**: an exact `name@marketplace` id.
+
+`inline` (a `--plugin-dir` folder, which names itself) is never trusted and a
+bare name never matches. Everything else with risky uses is refused, and the
+reason is logged to the transcript. Whether Claude Code stops a third-party
+marketplace from calling itself `claude-plugins-official` has not been
+verified here.
 
 ## Fail closed, deny only
 
@@ -212,6 +239,7 @@ Options (`/config`, or `pluginConfigs.guardclaw.options` in settings):
 | Option | Default | Meaning |
 |---|---|---|
 | `scannerPath` | `guardclaw-scan` | The scanner binary; use an absolute path |
+| `trustedMarketplaces` | `["builtin", "claude-plugins-official"]` | Marketplaces whose mods load despite the admission rules |
 | `allowMods` | `[]` | Exact `name@marketplace` ids allowed to load despite the admission rules |
 | `extraDenyPatterns` | `[]` | Your own regular expressions, matched case-insensitively against every shell command before the scanner runs |
 
@@ -227,6 +255,8 @@ degraded notice appended when the scanner is missing.
 - **It matches patterns and does no sandboxing.** A command spelled to slip
   past the engine's patterns (a script that does the work, variables, aliases)
   can get through, and the engine's verdict is only as good as its rules.
+  Agent mode in particular allows a download followed by a separate run
+  (`curl -o x.sh ... && bash x.sh`): each half is ordinary on its own.
 - **Ordering inside the user tier is not its own.** Only `prependPlugins`
   puts it first.
 - **The mods API is early access** and can change between releases.
@@ -241,8 +271,8 @@ claude plugin test claude-code-mod
 
 The mod test kit runs no host processes (a test answers `process.run`
 itself), so `tests/scanner-fixture.ts` holds what `guardclaw-scan
---stdin-command`, built from this repo, answers for every command the tests
-send. The Go test `TestModScannerFixture` fails whenever the scanner and the
+--stdin-command --agent`, built from this repo, answers for every command the
+tests send. The Go test `TestModScannerFixture` fails whenever the scanner and the
 fixture disagree; regenerate with
 
 ```

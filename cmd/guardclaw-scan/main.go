@@ -11,9 +11,10 @@
 // finding fires, so it composes into CI.
 //
 // With --stdin-command it instead reads ONE shell command from standard input
-// and runs the command-injection checker on it (see runCommand). That is the
-// mode the Claude Code mod in claude-code-mod/ calls for every shell command
-// the model asks to run.
+// and runs the command-injection checker on it (see runCommand). Adding
+// --agent judges it the way a coding agent needs (security.CheckAgentCommand):
+// chaining and substitution do not deny on their own, each simple command
+// inside does. The Claude Code mod in claude-code-mod/ uses --agent.
 package main
 
 import (
@@ -42,15 +43,16 @@ type commandVerdict struct {
 	Reason   string  `json:"reason,omitempty"`
 }
 
-// runCommand scans one command read from stdin with CheckCommandInjection,
-// once as written and once after NormalizeInput (NFKC, homoglyph and
-// zero-width folding), and denies when either pass detects. It returns 1 for a
-// deny, 0 for an allow and 2 when the command could not be read whole.
+// runCommand scans one command read from stdin with CheckCommandInjection
+// (strict, the default) or CheckAgentCommand (agent), once as written and
+// once after NormalizeInput (NFKC, homoglyph and zero-width folding), and
+// denies when either pass detects. It returns 1 for a deny, 0 for an allow
+// and 2 when the command could not be read whole.
 //
 // It deliberately does not use tiered.Engine.Scan: that engine is the general
 // input scanner (prompt injection, path traversal, secrets) and denies
 // ordinary commands such as `go test ./...` (triple_dot_traversal).
-func runCommand(stdin io.Reader, stdout, stderr io.Writer) int {
+func runCommand(stdin io.Reader, stdout, stderr io.Writer, agent bool) int {
 	data, err := io.ReadAll(io.LimitReader(stdin, maxCommandBytes+1))
 	if err != nil {
 		fmt.Fprintln(stderr, "read stdin:", err)
@@ -62,8 +64,12 @@ func runCommand(stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	command := string(data)
 	verdict := commandVerdict{Decision: "allow"}
+	check := security.CheckCommandInjection
+	if agent {
+		check = security.CheckAgentCommand
+	}
 	for _, input := range []string{command, security.NormalizeInput(command)} {
-		r := security.CheckCommandInjection(input)
+		r := check(input)
 		if r.Detected {
 			verdict = commandVerdict{
 				Decision: "deny",
@@ -104,7 +110,10 @@ func severityRank(s string) int {
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--stdin-command" {
-		os.Exit(runCommand(os.Stdin, os.Stdout, os.Stderr))
+		os.Exit(runCommand(os.Stdin, os.Stdout, os.Stderr, false))
+	}
+	if len(os.Args) == 3 && os.Args[1] == "--stdin-command" && os.Args[2] == "--agent" {
+		os.Exit(runCommand(os.Stdin, os.Stdout, os.Stderr, true))
 	}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -114,7 +123,7 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "usage: guardclaw-scan <file-or-dir> [more paths...]")
-		fmt.Fprintln(stderr, "       guardclaw-scan --stdin-command < command.txt")
+		fmt.Fprintln(stderr, "       guardclaw-scan --stdin-command [--agent] < command.txt")
 		return 2
 	}
 

