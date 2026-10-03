@@ -157,7 +157,11 @@ func (v *URLValidator) Validate(rawURL string) *URLValidationResult {
 	}
 
 	// Extract host
-	host := parsed.Hostname()
+	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	// IPv6 scope identifiers select an interface, not a different address.
+	if address, _, scoped := strings.Cut(host, "%"); scoped && net.ParseIP(address) != nil {
+		host = address
+	}
 	if host == "" {
 		result.Valid = false
 		result.Risk = URLRiskBlocked
@@ -268,12 +272,12 @@ func (v *URLValidator) ValidateMany(urls []string) []*URLValidationResult {
 
 // AddAllowedDomain adds a domain to the allowlist.
 func (v *URLValidator) AddAllowedDomain(domain string) {
-	v.allowedDomains[strings.ToLower(domain)] = true
+	v.allowedDomains[strings.ToLower(strings.TrimSuffix(domain, "."))] = true
 }
 
 // AddBlockedDomain adds a domain to the blocklist.
 func (v *URLValidator) AddBlockedDomain(domain string) {
-	v.blockedDomains[strings.ToLower(domain)] = true
+	v.blockedDomains[strings.ToLower(strings.TrimSuffix(domain, "."))] = true
 }
 
 // IsSafe returns true if the URL is safe to access.
@@ -298,7 +302,7 @@ func (v *URLValidator) isLocalhost(host string) bool {
 }
 
 func (v *URLValidator) isLoopback(ip net.IP) bool {
-	return ip.IsLoopback()
+	return ip.IsLoopback() || ip.IsUnspecified()
 }
 
 func (v *URLValidator) isMetadataService(host string) bool {
@@ -325,6 +329,9 @@ func (v *URLValidator) isMetadataService(host string) bool {
 }
 
 func (v *URLValidator) isPrivateIP(ip net.IP) bool {
+	if ip.IsUnspecified() {
+		return true
+	}
 	for _, cidr := range v.privateRanges {
 		if cidr.Contains(ip) {
 			return true

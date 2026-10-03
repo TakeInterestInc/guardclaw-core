@@ -129,51 +129,68 @@ func (e *EgressScanner) CheckProtectedPath(path string) bool {
 
 // scanMapRecursive walks a map and scans/redacts all string values.
 func (e *EgressScanner) scanMapRecursive(input map[string]any, result *EgressResult) map[string]any {
-	out := make(map[string]any, len(input))
-	for k, v := range input {
-		switch val := v.(type) {
-		case string:
-			redacted, r := e.ScanString(val)
-			result.Findings = append(result.Findings, r.Findings...)
-			if r.Blocked {
-				result.Blocked = true
-				result.Reason = r.Reason
-			}
-			out[k] = redacted
-		case map[string]any:
-			out[k] = e.scanMapRecursive(val, result)
-		case []any:
-			arr := make([]any, len(val))
-			for i, item := range val {
-				switch it := item.(type) {
-				case string:
-					redacted, r := e.ScanString(it)
-					result.Findings = append(result.Findings, r.Findings...)
-					arr[i] = redacted
-				case map[string]any:
-					arr[i] = e.scanMapRecursive(it, result)
-				default:
-					arr[i] = item
-				}
-			}
-			out[k] = arr
-		default:
-			out[k] = v
-		}
-	}
-	return out
+	return e.scanValue(input, result).(map[string]any)
 }
 
-// ScanJSON scans a JSON string, parsing it as a map or treating it as a plain string.
-func (e *EgressScanner) ScanJSON(jsonStr string) (string, *EgressResult) {
-	var m map[string]any
-	if err := json.Unmarshal([]byte(jsonStr), &m); err == nil {
-		redacted, result := e.ScanMap(m)
-		payload, err := json.Marshal(redacted)
-		if err != nil {
-			return e.ScanString(jsonStr)
+func (e *EgressScanner) scanValue(input any, result *EgressResult) any {
+	switch v := input.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, value := range v {
+			// Preserve signatures that depend on JSON field names (password, type,
+			// and related context). Redact the scalar value, preserving valid JSON.
+			switch value.(type) {
+			case string, float64, bool, nil:
+				member, err := json.Marshal(map[string]any{key: value})
+				encodedKey, _ := json.Marshal(key)
+				if err == nil {
+					contextual := false
+					for _, match := range e.pii.Detect(string(member)) {
+						if match.StartIndex < len(encodedKey)+2 && match.EndIndex > len(encodedKey)+2 {
+							result.Findings = append(result.Findings, EgressFinding{Type: "pii", Detail: fmt.Sprintf("PII detected: %s", match.Type)})
+							contextual = true
+						}
+					}
+					if contextual {
+						out[key] = "[PII REDACTED]"
+						continue
+					}
+				}
+			}
+			out[key] = e.scanValue(value, result)
 		}
-		return string(payload), result
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, value := range v {
+			out[i] = e.scanValue(value, result)
+		}
+		return out
+	case string:
+		redacted, r := e.ScanString(v)
+		result.Findings = append(result.Findings, r.Findings...)
+		if r.Blocked {
+			result.Blocked = true
+			result.Reason = r.Reason
+		}
+		return redacted
+	default:
+		return input
 	}
-	return e.ScanString(jsonStr)
+}
+
+// ScanJSON scans decoded JSON leaves, including root arrays and strings.
+// Invalid JSON retains the plain-text scanning behavior.
+func (e *EgressScanner) ScanJSON(jsonStr string) (string, *EgressResult) {
+	var value any
+	if err := json.Unmarshal([]byte(jsonStr), &value); err != nil {
+		return e.ScanString(jsonStr)
+	}
+	result := &EgressResult{}
+	redacted := e.scanValue(value, result)
+	payload, err := json.Marshal(redacted)
+	if err != nil {
+		return e.ScanString(jsonStr)
+	}
+	return string(payload), result
 }

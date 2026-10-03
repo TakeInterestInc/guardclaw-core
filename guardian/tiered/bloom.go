@@ -171,10 +171,25 @@ func Decode(r io.Reader) (*BloomFilter, error) {
 		return nil, fmt.Errorf("bloom: read n: %w", err)
 	}
 
-	words := (m + 63) / 64
-	bits := make([]uint64, words)
-	if err := binary.Read(r, binary.BigEndian, bits); err != nil {
-		return nil, fmt.Errorf("bloom: read bits: %w", err)
+	if m == 0 || k == 0 {
+		return nil, fmt.Errorf("bloom: invalid dimensions m=%d k=%d", m, k)
+	}
+	words := m / 64
+	if m%64 != 0 {
+		words++
+	}
+	if words > uint64(int(^uint(0)>>1))/8 {
+		return nil, fmt.Errorf("bloom: bit array too large")
+	}
+	// Read incrementally: an untrusted header must not allocate its claimed
+	// size before the corresponding bytes actually exist.
+	var bits []uint64
+	for i := uint64(0); i < words; i++ {
+		var word uint64
+		if err := binary.Read(r, binary.BigEndian, &word); err != nil {
+			return nil, fmt.Errorf("bloom: read bits: %w", err)
+		}
+		bits = append(bits, word)
 	}
 
 	return &BloomFilter{

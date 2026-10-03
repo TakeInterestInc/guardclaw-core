@@ -127,6 +127,18 @@ func (d *PIIDetector) Detect(input string) []PIIMatch {
 
 		found := pattern.regex.FindAllStringIndex(input, -1)
 		for _, loc := range found {
+			// PEM markers identify the entire block, not only its header.
+			// An unterminated block is unsafe through the end of the supplied text.
+			switch piiType {
+			case PIIPrivateKey, PIIOpenSSHKey, PIICertificate, PIIPGPBlock:
+				header := input[loc[0]:loc[1]]
+				footer := strings.Replace(header, "BEGIN", "END", 1)
+				if end := strings.Index(input[loc[1]:], footer); end >= 0 {
+					loc[1] += end + len(footer)
+				} else {
+					loc[1] = len(input)
+				}
+			}
 			value := input[loc[0]:loc[1]]
 			matches = append(matches, PIIMatch{
 				Type:       piiType,
@@ -145,24 +157,7 @@ func (d *PIIDetector) Detect(input string) []PIIMatch {
 // DetectInMap detects PII in a map of values (recursive).
 func (d *PIIDetector) DetectInMap(input map[string]any) []PIIMatch {
 	var matches []PIIMatch
-
-	for _, v := range input {
-		switch val := v.(type) {
-		case string:
-			matches = append(matches, d.Detect(val)...)
-		case map[string]any:
-			matches = append(matches, d.DetectInMap(val)...)
-		case []any:
-			for _, item := range val {
-				if s, ok := item.(string); ok {
-					matches = append(matches, d.Detect(s)...)
-				} else if m, ok := item.(map[string]any); ok {
-					matches = append(matches, d.DetectInMap(m)...)
-				}
-			}
-		}
-	}
-
+	walkMapStrings(input, func(s string) { matches = append(matches, d.Detect(s)...) })
 	return matches
 }
 
@@ -192,70 +187,39 @@ func (d *PIIDetector) RedactStringExcept(input string, keep ...PIIType) string {
 }
 
 func redactMatches(input string, matches []PIIMatch) string {
-	if len(matches) == 0 {
-		return input
-	}
-
-	// Sort by start index descending so we can replace from end without
-	// invalidating earlier indices. Also filter out overlapping matches
-	// (keep the one with higher confidence).
+	// Merge the union of covered bytes. Confidence cannot make any covered
+	// part of a secret safe to emit. Isolated matches keep their usual redactor.
 	sort.Slice(matches, func(i, j int) bool {
-		return matches[i].StartIndex > matches[j].StartIndex
+		if matches[i].StartIndex == matches[j].StartIndex {
+			return matches[i].EndIndex > matches[j].EndIndex
+		}
+		return matches[i].StartIndex < matches[j].StartIndex
 	})
-
-	// Remove overlapping matches (sorted descending, so check next vs current).
-	deduped := matches[:1]
-	for i := 1; i < len(matches); i++ {
-		prev := deduped[len(deduped)-1]
-		cur := matches[i]
-		// Overlap: cur ends after prev starts (since sorted desc by start).
-		if cur.EndIndex > prev.StartIndex {
-			// Keep the one with higher confidence.
-			if cur.Confidence > prev.Confidence {
-				deduped[len(deduped)-1] = cur
-			}
+	var spans []PIIMatch
+	for _, m := range matches {
+		if m.StartIndex < 0 || m.EndIndex > len(input) || m.StartIndex >= m.EndIndex {
 			continue
 		}
-		deduped = append(deduped, cur)
-	}
-
-	for _, m := range deduped {
-		if m.StartIndex >= 0 && m.EndIndex <= len(input) && m.StartIndex <= m.EndIndex {
-			input = input[:m.StartIndex] + m.Redacted + input[m.EndIndex:]
+		if len(spans) > 0 && m.StartIndex < spans[len(spans)-1].EndIndex {
+			prev := &spans[len(spans)-1]
+			if m.EndIndex > prev.EndIndex {
+				prev.EndIndex = m.EndIndex
+			}
+			prev.Redacted = "[PII REDACTED]"
+		} else {
+			spans = append(spans, m)
 		}
 	}
-
+	for i := len(spans) - 1; i >= 0; i-- {
+		m := spans[i]
+		input = input[:m.StartIndex] + m.Redacted + input[m.EndIndex:]
+	}
 	return input
 }
 
 // RedactMap redacts all PII in a map (recursive).
 func (d *PIIDetector) RedactMap(input map[string]any) map[string]any {
-	result := make(map[string]any)
-
-	for k, v := range input {
-		switch val := v.(type) {
-		case string:
-			result[k] = d.RedactString(val)
-		case map[string]any:
-			result[k] = d.RedactMap(val)
-		case []any:
-			arr := make([]any, len(val))
-			for i, item := range val {
-				if s, ok := item.(string); ok {
-					arr[i] = d.RedactString(s)
-				} else if m, ok := item.(map[string]any); ok {
-					arr[i] = d.RedactMap(m)
-				} else {
-					arr[i] = item
-				}
-			}
-			result[k] = arr
-		default:
-			result[k] = v
-		}
-	}
-
-	return result
+	return mapValueStrings(input, d.RedactString).(map[string]any)
 }
 
 // HasPII returns true if the input contains any PII.
@@ -383,7 +347,7 @@ func (d *PIIDetector) loadPatterns() {
 
 	// Private key (PEM format)
 	d.patterns[PIIPrivateKey] = &piiPattern{
-		regex:      regexp.MustCompile(`-----BEGIN\s+(?:RSA\s+|EC\s+|DSA\s+|OPENSSH\s+)?PRIVATE\s+KEY-----`),
+		regex:      regexp.MustCompile(`-----BEGIN\s+(?:RSA\s+|EC\s+|DSA\s+|OPENSSH\s+|ENCRYPTED\s+)?PRIVATE\s+KEY-----`),
 		confidence: 0.99,
 		redactor:   func(s string) string { return "[PRIVATE_KEY REDACTED]" },
 	}

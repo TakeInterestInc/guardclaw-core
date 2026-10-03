@@ -117,23 +117,45 @@ func extractURLsFromMap(m map[string]any) []string {
 	return urls
 }
 
-// walkMapStrings recursively visits all string values in a map.
+// walkMapStrings recursively visits JSON string leaves, including nested arrays.
 func walkMapStrings(m map[string]any, fn func(string)) {
-	for _, v := range m {
-		switch val := v.(type) {
-		case string:
-			fn(val)
-		case map[string]any:
-			walkMapStrings(val, fn)
-		case []any:
-			for _, item := range val {
-				switch it := item.(type) {
-				case string:
-					fn(it)
-				case map[string]any:
-					walkMapStrings(it, fn)
-				}
-			}
+	walkValueStrings(m, fn)
+}
+
+func walkValueStrings(value any, fn func(string)) {
+	switch v := value.(type) {
+	case string:
+		fn(v)
+	case map[string]any:
+		for _, item := range v {
+			walkValueStrings(item, fn)
 		}
+	case []any:
+		for _, item := range v {
+			walkValueStrings(item, fn)
+		}
+	}
+}
+
+// mapValueStrings copies JSON containers and transforms every string leaf.
+// Nonstring leaves, keys, and array order are preserved.
+func mapValueStrings(value any, fn func(string) string) any {
+	switch v := value.(type) {
+	case string:
+		return fn(v)
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, item := range v {
+			out[k] = mapValueStrings(item, fn)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = mapValueStrings(item, fn)
+		}
+		return out
+	default:
+		return value
 	}
 }

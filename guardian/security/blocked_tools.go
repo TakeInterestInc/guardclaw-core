@@ -474,44 +474,16 @@ func CheckBlockedTool(name string) *BlockedToolResult {
 
 // CheckBlockedToolInput checks all string values in a map for blocked tools.
 func CheckBlockedToolInput(input map[string]any) *BlockedToolResult {
-	worstResult := &BlockedToolResult{
-		Blocked: false,
-		Score:   0.0,
-	}
-
-	for _, v := range input {
-		switch val := v.(type) {
-		case string:
-			result := CheckBlockedTool(val)
-			if result.Score > worstResult.Score {
-				worstResult = result
-			}
-			if result.Blocked {
-				return result
-			}
-		case map[string]any:
-			result := CheckBlockedToolInput(val)
-			if result.Score > worstResult.Score {
-				worstResult = result
-			}
-			if result.Blocked {
-				return result
-			}
-		case []any:
-			for _, item := range val {
-				if str, ok := item.(string); ok {
-					result := CheckBlockedTool(str)
-					if result.Score > worstResult.Score {
-						worstResult = result
-					}
-					if result.Blocked {
-						return result
-					}
-				}
-			}
+	worstResult := &BlockedToolResult{}
+	walkMapStrings(input, func(s string) {
+		if worstResult.Blocked {
+			return
 		}
-	}
-
+		result := CheckBlockedTool(s)
+		if result.Blocked || result.Score > worstResult.Score {
+			worstResult = result
+		}
+	})
 	return worstResult
 }
 

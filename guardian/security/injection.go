@@ -978,7 +978,8 @@ func CheckPromptInjection(input string) *InjectionCheckResult {
 	}
 
 	// Normalize Unicode confusables
-	normalizedInput := normalizeUnicode(input)
+	normalizedInput := NormalizeInput(input)
+	views := append(DetectionInputs(input), normalizeUnicode(input))
 	inputLower := strings.ToLower(normalizedInput)
 
 	// Track all indicators found
@@ -1000,9 +1001,12 @@ func CheckPromptInjection(input string) *InjectionCheckResult {
 	var bestMatch *InjectionPattern
 	for i := range PromptInjectionPatterns {
 		pattern := &PromptInjectionPatterns[i]
-		if pattern.Pattern.MatchString(normalizedInput) {
-			if bestMatch == nil || pattern.Severity > bestMatch.Severity {
-				bestMatch = pattern
+		for _, view := range views {
+			if pattern.Pattern.MatchString(view) {
+				if bestMatch == nil || pattern.Severity > bestMatch.Severity {
+					bestMatch = pattern
+				}
+				break
 			}
 		}
 	}
@@ -1215,44 +1219,16 @@ func hasRepeatedPatterns(input string) bool {
 
 // CheckInputMap checks all string values in a map for prompt injection.
 func CheckInputMap(input map[string]any) *InjectionCheckResult {
-	worstResult := &InjectionCheckResult{
-		Detected: false,
-		Score:    0.0,
-	}
-
-	for _, v := range input {
-		switch val := v.(type) {
-		case string:
-			result := CheckPromptInjection(val)
-			if result.Score > worstResult.Score {
-				worstResult = result
-			}
-			if result.Detected {
-				return result // Return immediately if injection detected
-			}
-		case map[string]any:
-			result := CheckInputMap(val)
-			if result.Score > worstResult.Score {
-				worstResult = result
-			}
-			if result.Detected {
-				return result
-			}
-		case []any:
-			for _, item := range val {
-				if str, ok := item.(string); ok {
-					result := CheckPromptInjection(str)
-					if result.Score > worstResult.Score {
-						worstResult = result
-					}
-					if result.Detected {
-						return result
-					}
-				}
-			}
+	worstResult := &InjectionCheckResult{}
+	walkMapStrings(input, func(s string) {
+		if worstResult.Detected {
+			return
 		}
-	}
-
+		result := CheckPromptInjection(s)
+		if result.Detected || result.Score > worstResult.Score {
+			worstResult = result
+		}
+	})
 	return worstResult
 }
 

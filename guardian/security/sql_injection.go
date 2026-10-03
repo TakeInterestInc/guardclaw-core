@@ -326,43 +326,15 @@ func CheckSQLInjection(input string) *SQLInjectionResult {
 
 // CheckSQLInput checks a map of inputs for SQL injection.
 func CheckSQLInput(input map[string]any) *SQLInjectionResult {
-	worstResult := &SQLInjectionResult{
-		Detected: false,
-		Score:    0.0,
-	}
-
-	for _, v := range input {
-		switch val := v.(type) {
-		case string:
-			result := CheckSQLInjection(val)
-			if result.Score > worstResult.Score {
-				worstResult = result
-			}
-			if result.Detected {
-				return result
-			}
-		case map[string]any:
-			result := CheckSQLInput(val)
-			if result.Score > worstResult.Score {
-				worstResult = result
-			}
-			if result.Detected {
-				return result
-			}
-		case []any:
-			for _, item := range val {
-				if str, ok := item.(string); ok {
-					result := CheckSQLInjection(str)
-					if result.Score > worstResult.Score {
-						worstResult = result
-					}
-					if result.Detected {
-						return result
-					}
-				}
-			}
+	worstResult := &SQLInjectionResult{}
+	walkMapStrings(input, func(s string) {
+		if worstResult.Detected {
+			return
 		}
-	}
-
+		result := CheckSQLInjection(s)
+		if result.Detected || result.Score > worstResult.Score {
+			worstResult = result
+		}
+	})
 	return worstResult
 }
