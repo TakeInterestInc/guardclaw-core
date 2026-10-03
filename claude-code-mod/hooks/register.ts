@@ -25,6 +25,7 @@ import {
   DEFAULT_TRUSTED_MARKETPLACES,
   protectedWrite,
   riskyCallsOf,
+  scannerWrite,
   riskyEventsOf,
   trustedMarketplaceOf,
   WRITE_TOOLS,
@@ -45,6 +46,7 @@ type Mode = 'scanner' | 'degraded'
 // again. Everything that must survive a reload lives in $.state.
 let modePromise: Promise<Mode> | undefined
 let rootRealPromise: Promise<string | undefined> | undefined
+let scannerPathsPromise: Promise<string[]> | undefined
 
 function list(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((v): v is string => typeof v === 'string' && v.trim() !== '').map(v => v.trim())
@@ -184,6 +186,30 @@ async function placed($: EngineInterface, path: string): Promise<string | undefi
   return dir?.realPath === undefined ? undefined : `${dir.realPath.replace(/\/$/, '')}/${name}`
 }
 
+/** The scanner as configured, and where it really lands (a bare name is looked up with which). */
+function scannerPaths($: EngineInterface, scannerPath: string): Promise<string[]> {
+  if (!scannerPathsPromise) {
+    scannerPathsPromise = (async () => {
+      const out = [scannerPath]
+      let located: string | undefined = scannerPath.includes('/') ? scannerPath : undefined
+      if (!located) {
+        const found = await $.process.run(['/usr/bin/which', scannerPath], { timeoutMs: 5000 }).catch(() => undefined)
+        const line = found?.exitCode === 0 ? found.stdout.trim().split('\n')[0] : undefined
+        if (line) {
+          located = line
+          out.push(line)
+        }
+      }
+      if (located) {
+        const real = await $.fs.stat(located, { resolve: true }).then(st => st.realPath, () => undefined)
+        if (real) out.push(real)
+      }
+      return out
+    })()
+  }
+  return scannerPathsPromise
+}
+
 function rootReal($: EngineInterface): Promise<string | undefined> {
   if (!rootRealPromise) rootRealPromise = $.fs.stat($.plugin.root, { resolve: true }).then(s => s.realPath, () => undefined)
   return rootRealPromise
@@ -217,15 +243,17 @@ export const register: Register = (on, options) => {
         if (typeof path !== 'string') throw new TypeError(`${e.tool} ${field} is ${typeof path}, not a string`)
         const real = await placed($, expandHome(path, home))
         verdict = protectedWrite(path, [$.plugin.root, (await rootReal($)) ?? ''], home, real)
+          ?? scannerWrite(path, real, await scannerPaths($, scannerPath), home)
       }
       if (!verdict && e.tool === 'Bash' && typeof input.command !== 'string') {
         throw new TypeError(`Bash command is ${typeof input.command}, not a string`)
       }
       for (const command of verdict ? [] : commandStringsOf(input)) {
         const mode = await modeOf($, scannerPath)
+        const scanners = await scannerPaths($, scannerPath)
         verdict = mode === 'degraded'
-          ? degradedVerdict(command, $.plugin.root, extraDenyPatterns, home)
-          : checkCommand(command, $.plugin.root, extraDenyPatterns, home) ?? (await scan($, scannerPath, command))
+          ? degradedVerdict(command, $.plugin.root, extraDenyPatterns, home, scanners)
+          : checkCommand(command, $.plugin.root, extraDenyPatterns, home, scanners) ?? (await scan($, scannerPath, command))
         if (verdict) break
       }
     } catch (error) {

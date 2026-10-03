@@ -71,31 +71,40 @@ runs first and can only add denies. Your `extraDenyPatterns` run there too.
 Without `--agent` the scanner is strict (`CheckCommandInjection`): chaining
 (`&&`, `;`, `|`, `&`) and substitution (`$( )`, backticks) deny on their own,
 so `cd src && npm test` and `echo $(date)` are blocked. That stays the default
-for untrusted input. `--agent` keeps every other rule and looks inside
-instead:
+for untrusted input.
 
-- The whole line is matched against every pattern in a deny category
-  (destructive, pipe into a shell or interpreter, data exfiltration), every
-  non-structural pattern at full severity, and the self-protection check. A
-  download inside a substitution (`$(curl ...)`) still denies.
-- The line is then split the way a shell splits it (the self-protection
-  parser), wrappers are opened (`sh -c`, `bash -c`, `eval`, `su -c`,
-  `watch`, `xargs`, `find -exec`, `sudo`, `env`, `nice`, `$( )`, backticks,
-  subshells, `if`/`then`) and every simple command inside is judged on its
-  own, quotes resolved.
-- `rm_rf_dot` is replaced by a precise check: a recursive `rm` of `.`, `./`,
-  `..`, `*`, `~`, `/`, a home folder or a folder at its top, or a home dot
-  folder denies; `./build` and `dist/` do not. `rm_rf_root` and `rm_rf_home`
-  are unchanged, so `rm -rf /tmp/x` is still denied.
-- `xargs` into a shell or interpreter denies (`ls | xargs bash`); `xargs wc
-  -l` does not. `find` with `-delete` or an exec'd `rm` over `/`, `~` or a
-  system folder denies, and so does `.` with no `-name`/`-path` filter.
+`--agent` is the strict verdict with one narrow exception, and it **never
+denies less than strict outside that exception**:
+
+- Every strict rule runs over the line. A rule that fires is set aside only
+  when it is structural (the `command_chaining` and `command_substitution`
+  categories, except a download inside a substitution such as `$(curl ...)`)
+  or one of four rules with a precise check that passes for the whole line:
+  `stderr_redirect` (the pattern is the literal `2>&1`), `pipe_xargs` (every
+  `xargs` runs a plain command that is not destructive, a shell, an
+  interpreter, a wrapper or a network tool), `pipe_tee` (every `tee` writes a
+  literal path inside the working folder) and `rm_rf_dot` (every recursive
+  `rm` names literal targets that are not `.`, `..`, `*`, `~`, `/`, a home
+  folder or a home dot folder). Any other strict rule denies, as in strict.
+- Then each simple command inside the line is held to the same rule: the
+  line is split the way a shell splits it, wrappers are opened (`sh -c`,
+  `bash -c`, `eval`, `su -c`, `watch`, `xargs`, `find -exec`, `sudo`, `env`,
+  `nice`, `$( )`, backticks, subshells) and quotes are resolved.
+- A command whose name cannot be read without running something is denied: a
+  variable, a substitution, a glob, a `$'..'` escape, a brace expansion, or a
+  function or alias the same line defines. So is a recursive `rm` of a
+  target holding `$` or a backtick.
+
+`TestAgentNeverDeniesLessThanStrict` pins this over 1,100+ inputs (every
+pattern's own example, every input from both reviews, the everyday list, each
+also behind `cd x &&`, a subshell, `bash -c` and `eval`).
 
 Allowed in agent mode, measured: `cd src && npm test`, `go test ./... 2>&1 |
-tail`, `echo $(date)`, `rm -rf ./build`, `make && make test`, `ls | grep x`,
-`npm ci && npm test`, `git ls-files | xargs wc -l`, `npm test | tee test.log`.
-Denied: the whole review corpus, plus a download piped to a shell after a
-`cd`, and a credential file sent to the network from inside `$( )`.
+tail`, `echo $(date)`, `rm -rf ./build`, `rm -rf dist/`, `make && make test`,
+`ls | grep x`, `npm ci && npm test`, `git ls-files | xargs wc -l`,
+`npm test | tee test.log`, `find . -name '*.pyc' -delete`. Everything strict
+denies for any other reason stays denied, for example `sudo su -`,
+`crontab -e`, `find src -exec grep ...` and `git diff > /tmp/p.diff`.
 
 ### Install the scanner
 
@@ -107,6 +116,13 @@ Then set the `scannerPath` option to the absolute path of the binary (for
 example `~/go/bin/guardclaw-scan` spelled out in full). The default,
 `guardclaw-scan`, is looked up on `PATH`, and anything that can change `PATH`
 can change which program judges your commands.
+
+The mod protects the scanner in both modes: a file-tool write to any
+`guardclaw-scan`, to the configured path or to where it really lands is
+denied (`write_scanner`), and so is a shell command that runs
+`go install|get|build ...guardclaw...`, `brew install|reinstall|uninstall
+... guardclaw`, or `rm`, `mv`, `cp`, `chmod`, `ln` and the like on it
+(`scanner_tamper`). Install or upgrade it yourself, outside the agent.
 
 ### Degraded mode: when the scanner is missing
 
@@ -171,9 +187,14 @@ Two ways through, both read from the mod's provenance:
 
 `inline` (a `--plugin-dir` folder, which names itself) is never trusted and a
 bare name never matches. Everything else with risky uses is refused, and the
-reason is logged to the transcript. Whether Claude Code stops a third-party
-marketplace from calling itself `claude-plugins-official` has not been
-verified here.
+reason is logged to the transcript.
+
+On provenance: the Claude Code 2.1.287 binary reserves the marketplace name
+`claude-plugins-official` for sources on Anthropic's `anthropics/` GitHub
+organization, reserves `builtin` and `inline`, and keys each marketplace name
+to a single source, so a third-party marketplace cannot take those names in
+that build. That is a property of the build, not of this mod: re-check it
+when you upgrade.
 
 ## Fail closed, deny only
 
@@ -188,7 +209,8 @@ verified here.
 ## What it uses
 
 `claude plugin validate claude-code-mod` reports the surface: `$.process.run`
-(the scanner, by argv, no shell), `$.fs.stat` (where a written path lands),
+(the scanner by argv with no shell, and `/usr/bin/which` once when the
+scanner is a bare name), `$.fs.stat` (where a written path lands),
 `$.env.get("HOME")`, `$.clock.now`, `$.state.get` / `$.state.set` (one
 value, today's deny count), `$.ui.log` and `$.ui.status`. No network, no file
 writes, no environment writes.
@@ -255,8 +277,15 @@ degraded notice appended when the scanner is missing.
 - **It matches patterns and does no sandboxing.** A command spelled to slip
   past the engine's patterns (a script that does the work, variables, aliases)
   can get through, and the engine's verdict is only as good as its rules.
-  Agent mode in particular allows a download followed by a separate run
-  (`curl -o x.sh ... && bash x.sh`): each half is ordinary on its own.
+- **Known gaps and false positives** (tracked in
+  [issue #14](https://github.com/TakeInterestInc/guardclaw-core/issues/14)):
+  - agent mode allows a download followed by a separate run
+    (`curl -o x.sh ... && bash x.sh`), since each half is ordinary on its own;
+  - `rm -rf /tmp/x` is denied (`rm_rf_root` matches any `rm -rf /...`);
+  - strict rules deny `| shasum` (`pipe_shell` has no word boundary) and
+    `| python3 -m json.tool` (`pipe_interpreter`), in agent mode too;
+  - degraded mode denies every compound command, including ordinary ones
+    such as `cd src && npm test`.
 - **Ordering inside the user tier is not its own.** Only `prependPlugins`
   puts it first.
 - **The mods API is early access** and can change between releases.

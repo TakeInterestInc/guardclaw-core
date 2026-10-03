@@ -458,3 +458,62 @@ describe('trusted marketplaces', () => {
     expect(trustedMarketplaceOf('yes-man@inline', ['inline', 'builtin'])).toBeUndefined()
   })
 })
+
+describe('the scanner protects itself', () => {
+  for (const command of [
+    'go install github.com/TakeInterestInc/guardclaw-core/cmd/guardclaw-scan@latest',
+    'go build -o ~/go/bin/guardclaw-scan ./cmd/guardclaw-scan',
+    'brew reinstall guardclaw',
+    'brew uninstall guardclaw',
+    `rm ${SCANNER}`,
+    'rm ~/go/bin/guardclaw-scan',
+    `mv ${SCANNER} /tmp/x`,
+    `chmod 000 ${SCANNER}`,
+    `cp /tmp/fake ${SCANNER}`,
+  ]) {
+    test(`denies: ${command}`, WITH_SCANNER, async ($, on) => {
+      engine(on)
+      scanner(on)
+      const r = await bash($, command)
+      expect(reasonOf(r)).toMatch(/scanner_tamper/)
+    })
+  }
+
+  test('denies a redirect over the scanner', WITH_SCANNER, async ($, on) => {
+    engine(on)
+    scanner(on)
+    expect(reasonOf(await bash($, `echo x > ${SCANNER}`))).toMatch(/scanner_tamper|write_scanner/)
+  })
+
+  test('denies a scanner tamper in degraded mode too', WITH_SCANNER, async ($, on) => {
+    engine(on)
+    expect(reasonOf(await bash($, `rm ${SCANNER}`))).toMatch(/scanner_tamper/)
+  })
+
+  for (const path of [SCANNER, '/Users/someone/go/bin/guardclaw-scan', '~/go/bin/guardclaw-scan']) {
+    test(`denies Write of ${path}`, WITH_SCANNER, async ($, on) => {
+      engine(on)
+      scanner(on)
+      mock.env(on, { HOME: '/Users/someone' })
+      const r = await $.tool.call({ tool: 'Write', file_path: path, content: '#!/bin/sh\nexit 0' } as any)
+      expect(reasonOf(r)).toMatch(/write_scanner/)
+    })
+  }
+
+  test('denies a Write that lands on the scanner through a link', WITH_SCANNER, async ($, on) => {
+    engine(on)
+    scanner(on)
+    on('fs.stat', ($_: any, e: any) => {
+      if (e.path === '/Users/someone/project/tool') return { value: { kind: 'file', size: 1, mtimeMs: 0, isLink: true, realPath: SCANNER } }
+      throw new Error('ENOENT')
+    })
+    const r = await $.tool.call({ tool: 'Write', file_path: '/Users/someone/project/tool', content: 'x' } as any)
+    expect(reasonOf(r)).toMatch(/write_scanner/)
+  })
+
+  test('still allows ordinary commands', WITH_SCANNER, async ($, on) => {
+    engine(on)
+    scanner(on)
+    expect((await bash($, 'git status')).result).toBe(RAN)
+  })
+})

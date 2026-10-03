@@ -88,6 +88,7 @@ const PROTECTED_WRITE: readonly Rule[] = [
   { name: 'write_managed_settings', re: /(?:\/Library\/Application Support\/ClaudeCode\/|^(?:\/private)?\/etc\/claude-code\/)managed-settings/i, reason: 'edits the managed settings that seat this guard' },
   { name: 'write_claude_settings', re: /(?:^|\/)\.claude\/settings[^/]*\.json$/i, reason: 'edits a Claude Code settings file (hooks, permissions and enabled mods live there)' },
   { name: 'write_mcp_config', re: /(?:^|\/)\.mcp\.json$/i, reason: 'edits an MCP server configuration' },
+  { name: 'write_scanner', re: /(?:^|\/)guardclaw-scan(?:\.exe)?$/i, reason: 'replaces the GuardClaw scanner that judges shell commands' },
 ]
 
 const SYSTEM_DIRS = /^\/(?:bin|boot|dev|etc|home|lib|lib64|opt|private|proc|root|sbin|sys|usr|var|Applications|Library|System|Users|Volumes)\/?$/
@@ -240,7 +241,7 @@ export function protectedWrite(path: string, guardRoots: string | readonly strin
  * `extra` holds the person's own patterns (userConfig `extraDenyPatterns`);
  * an invalid one throws, and the caller turns the throw into a deny.
  */
-export function checkCommand(command: unknown, guardRoot?: string, extra: readonly string[] = [], home?: string): Verdict | undefined {
+export function checkCommand(command: unknown, guardRoot?: string, extra: readonly string[] = [], home?: string, scannerPaths: readonly string[] = []): Verdict | undefined {
   if (typeof command !== 'string') throw new TypeError(`shell command is ${typeof command}, not a string`)
   const c = normalize(command)
   for (const source of extra) {
@@ -252,8 +253,10 @@ export function checkCommand(command: unknown, guardRoot?: string, extra: readon
   for (const rule of COMMAND_RULES) {
     if (rule.re.test(c)) return { rule: rule.name, reason: rule.reason }
   }
+  const tamper = scannerTamper(c, scannerPaths)
+  if (tamper) return tamper
   for (const target of writeTargets(c)) {
-    const v = protectedWrite(target, guardRoot ? [guardRoot] : [], home)
+    const v = protectedWrite(target, guardRoot ? [guardRoot] : [], home) ?? scannerWrite(target, undefined, scannerPaths, home)
     if (v) return v
   }
   if (guardRoot && guardRoot.length > 1 && c.includes(guardRoot) && /\b(?:rm|mv|cp|sed|perl|tee|truncate|ln|chmod|unlink)\b|>/.test(c)) {
@@ -292,14 +295,14 @@ function leadWord(command: string): string {
   return (out[0] ?? '').replace(/^.*\//, '')
 }
 
-export function degradedVerdict(command: unknown, guardRoot?: string, extra: readonly string[] = [], home?: string): Verdict | undefined {
+export function degradedVerdict(command: unknown, guardRoot?: string, extra: readonly string[] = [], home?: string, scannerPaths: readonly string[] = []): Verdict | undefined {
   if (typeof command !== 'string') throw new TypeError(`shell command is ${typeof command}, not a string`)
   const c = normalize(command)
   for (const rule of DEGRADED_TOKENS) {
     if (rule.re.test(command) || rule.re.test(c)) return { rule: rule.name, reason: `${rule.reason}, and the GuardClaw scanner is not installed, so it cannot be checked` }
   }
   if (DEGRADED_LEAD.test(leadWord(c))) return { rule: 'degraded_wrapper', reason: `runs another command through ${leadWord(c)}, and the GuardClaw scanner is not installed, so it cannot be checked` }
-  return checkCommand(command, guardRoot, extra, home)
+  return checkCommand(command, guardRoot, extra, home, scannerPaths)
 }
 
 /**
@@ -366,4 +369,40 @@ export function trustedMarketplaceOf(provenance: string, trusted: readonly strin
   const marketplace = provenance.slice(at + 1)
   if (marketplace === 'inline') return undefined
   return trusted.includes(marketplace) ? marketplace : undefined
+}
+
+function escapeRe(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * A shell command that reinstalls, removes, moves or changes the scanner:
+ * `go install|get|build ...guardclaw...`, `brew install|reinstall|uninstall
+ * ... guardclaw`, or rm, mv, cp, chmod, ln and the rest naming any
+ * `guardclaw-scan` or the configured scanner path (as given or resolved).
+ */
+export function scannerTamper(command: string, scannerPaths: readonly string[] = []): Verdict | undefined {
+  const c = normalize(command)
+  if (/\bgo\s+(?:install|get|build)\b[^;&|\n]*guardclaw/i.test(c)) {
+    return { rule: 'scanner_tamper', reason: 'rebuilds or reinstalls the GuardClaw scanner that judges shell commands' }
+  }
+  if (/\bbrew\s+(?:install|reinstall|uninstall|remove|rm|upgrade|unlink|link)\b[^;&|\n]*guardclaw/i.test(c)) {
+    return { rule: 'scanner_tamper', reason: 'reinstalls or removes GuardClaw through Homebrew' }
+  }
+  const names = ['guardclaw-scan', ...scannerPaths.filter(p => p.length > 1).map(escapeRe)]
+  const target = new RegExp(`\\b(?:rm|mv|cp|ln|chmod|chown|chflags|xattr|install|truncate|shred|unlink|tee|sed|dd|rsync)\\b[^;&|\\n]*(?:${names.map(n => n === 'guardclaw-scan' ? 'guardclaw-scan\\b' : n).join('|')})`, 'i')
+  if (target.test(c)) return { rule: 'scanner_tamper', reason: 'changes or removes the GuardClaw scanner that judges shell commands' }
+  return undefined
+}
+
+/** A file-tool write to the scanner: any `guardclaw-scan`, or the configured path as given or resolved. */
+export function scannerWrite(path: string, realPath: string | undefined, scannerPaths: readonly string[], home?: string): Verdict | undefined {
+  const candidates = [normalize(path), expandHome(path, home)]
+  if (realPath) candidates.push(realPath)
+  for (const p of candidates) {
+    if (/(?:^|\/)guardclaw-scan(?:\.exe)?$/i.test(p) || scannerPaths.some(s => s.length > 1 && s === p)) {
+      return { rule: 'write_scanner', reason: `replaces the GuardClaw scanner that judges shell commands: ${path}` }
+    }
+  }
+  return undefined
 }
