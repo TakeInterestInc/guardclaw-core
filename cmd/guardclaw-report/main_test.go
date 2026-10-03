@@ -191,6 +191,13 @@ func TestCLICancellationTerminatesWithoutReport(t *testing.T) {
 	if err = cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		// Reap the test-owned child even if readiness or signal assertions fail.
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
 	_ = readyWrite.Close()
 	ready := make(chan error, 1)
 	go func() { var b [1]byte; _, err := io.ReadFull(readyRead, b[:]); ready <- err }()
