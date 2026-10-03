@@ -427,32 +427,16 @@ func CheckCommandInjection(input string) *CommandInjectionResult {
 
 // CheckCommandInput checks a map of inputs for command injection.
 func CheckCommandInput(input map[string]any) *CommandInjectionResult {
-	worstResult := &CommandInjectionResult{
-		Detected: false,
-		Score:    0.0,
-	}
-
-	for _, v := range input {
-		switch val := v.(type) {
-		case string:
-			result := CheckCommandInjection(val)
-			if result.Score > worstResult.Score {
-				worstResult = result
-			}
-			if result.Detected {
-				return result
-			}
-		case map[string]any:
-			result := CheckCommandInput(val)
-			if result.Score > worstResult.Score {
-				worstResult = result
-			}
-			if result.Detected {
-				return result
-			}
+	worstResult := &CommandInjectionResult{}
+	walkMapStrings(input, func(s string) {
+		if worstResult.Detected {
+			return
 		}
-	}
-
+		result := CheckCommandInjection(s)
+		if result.Detected || result.Score > worstResult.Score {
+			worstResult = result
+		}
+	})
 	return worstResult
 }
 

@@ -50,11 +50,12 @@ type RAGScanResult struct {
 	Findings     []RAGFinding  `json:"findings"`
 	TotalDocs    int           `json:"total_docs"`
 	PoisonedDocs int           `json:"poisoned_docs"`
+	SkippedDocs  int           `json:"skipped_docs,omitempty"`
 	TamperedDocs int           `json:"tampered_docs"`
 	ScanDuration time.Duration `json:"scan_duration_ns"`
 }
 
-// IsPoisoned returns true if any poisoning patterns were detected.
+// IsPoisoned conservatively flags detected poisoning or an incomplete scan.
 func (r *RAGScanResult) IsPoisoned() bool {
 	return len(r.Findings) > 0
 }
@@ -76,7 +77,8 @@ type RAGMonitor struct {
 	// MaxFindingsPerDoc limits noise from a single poisoned document.
 	MaxFindingsPerDoc int
 
-	// MaxDocSizeBytes skips documents larger than this (default: 1MB).
+	// MaxDocSizeBytes bounds scanning (default: 1MB). Oversized documents
+	// produce an explicit incomplete-scan finding, never a clean result.
 	MaxDocSizeBytes int
 
 	// mu protects the document hash cache.
@@ -106,8 +108,10 @@ func (rm *RAGMonitor) ScanDocuments(docs []RetrievedDocument) *RAGScanResult {
 	for i := range docs {
 		doc := &docs[i]
 
-		// Skip oversized documents.
+		// Preserve the resource bound without silently declaring unsafe input clean.
 		if len(doc.Content) > rm.MaxDocSizeBytes {
+			result.SkippedDocs++
+			result.Findings = append(result.Findings, incompleteRAGFinding(doc))
 			continue
 		}
 
@@ -132,9 +136,17 @@ func (rm *RAGMonitor) ScanDocuments(docs []RetrievedDocument) *RAGScanResult {
 // ScanSingleDocument analyzes one document and returns findings.
 func (rm *RAGMonitor) ScanSingleDocument(doc *RetrievedDocument) []RAGFinding {
 	if len(doc.Content) > rm.MaxDocSizeBytes {
-		return nil
+		return []RAGFinding{incompleteRAGFinding(doc)}
 	}
 	return rm.scanDocument(doc)
+}
+
+// IsComplete reports whether every supplied document was scanned.
+func (r *RAGScanResult) IsComplete() bool { return r.SkippedDocs == 0 }
+
+func incompleteRAGFinding(doc *RetrievedDocument) RAGFinding {
+	return RAGFinding{DocumentID: doc.ID, PatternName: "scan_incomplete_size_limit",
+		Category: "scan_limit", Severity: 1, Confidence: 1, Source: doc.Source, SourceRef: doc.SourceRef}
 }
 
 // CheckTampering returns true if the document content has changed
@@ -238,12 +250,15 @@ func HighSeverityFindings(findings []RAGFinding, threshold float64) []RAGFinding
 
 // SummarizeResult returns a human-readable summary of RAG scan results.
 func SummarizeResult(r *RAGScanResult) string {
-	if !r.IsPoisoned() && r.TamperedDocs == 0 {
+	if !r.IsPoisoned() && r.TamperedDocs == 0 && r.IsComplete() {
 		return "RAG scan clean: no poisoning detected"
 	}
 
 	var b strings.Builder
 	b.WriteString("RAG scan alert: ")
+	if !r.IsComplete() {
+		b.WriteString("incomplete: " + intToStr(r.SkippedDocs) + " doc(s) exceed size limit; ")
+	}
 
 	if r.PoisonedDocs > 0 {
 		b.WriteString(strings.Join([]string{

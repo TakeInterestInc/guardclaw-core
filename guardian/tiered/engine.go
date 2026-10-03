@@ -275,12 +275,14 @@ func (e *Engine) Scan(input string) ScanResult {
 		return result
 	}
 
-	// Normalize once for the pattern-matching tiers (AC + RE2). NormalizeInput
+	// Match both original and normalized text: folding must not erase native
+	// language signatures. NormalizeInput
 	// applies NFKC, confusable/homoglyph folding, zero-width stripping, math-symbol
-	// and fullwidth ASCII mapping, and HTML-concealment removal — without this,
+	// and fullwidth ASCII mapping, and comment unwrapping — without this,
 	// unicode-evasion attacks (𝐢𝐠𝐧𝐨𝐫𝐞, fullwidth ｅｖｉｌ, zero-width splits) bypass
 	// every pattern. Bloom (exact hash) and entropy (measures the raw bytes) use
 	// the original input.
+	views := security.DetectionInputs(input)
 	normalized := security.NormalizeInput(input)
 
 	// Tier 1: Bloom filter (hash lookup).
@@ -301,7 +303,14 @@ func (e *Engine) Scan(input string) ScanResult {
 
 	// Tier 2: Aho-Corasick (literal scan).
 	if e.ac != nil {
-		if match := e.ac.ScanFirst(normalized); match != nil {
+		match := e.ac.ScanFirst(views[0])
+		for _, view := range views[1:] {
+			if match != nil {
+				break
+			}
+			match = e.ac.ScanFirst(view)
+		}
+		if match != nil {
 			result.Decision = "deny"
 			result.Tier = 2
 			result.Severity = "high"
@@ -317,7 +326,19 @@ func (e *Engine) Scan(input string) ScanResult {
 	}
 
 	// Tier 3: Composite RE2 (regex scan).
-	matches := e.re2.Scan(normalized)
+	matches := e.re2.Scan(views[0])
+	seenPatterns := make(map[string]bool, len(matches))
+	for _, m := range matches {
+		seenPatterns[m.PatternID] = true
+	}
+	for _, view := range views[1:] {
+		for _, m := range e.re2.Scan(view) {
+			if !seenPatterns[m.PatternID] {
+				matches = append(matches, m)
+				seenPatterns[m.PatternID] = true
+			}
+		}
+	}
 	if len(e.selfProtect) > 0 {
 		if name, ok := security.MatchSelfProtection(normalized); ok {
 			p, known := e.selfProtect[name]

@@ -116,12 +116,18 @@ export function segments(command: string): string[] {
 
 function words(segment: string): string[] {
   const out = segment.split(/\s+/).map(unquote).filter(Boolean)
-  // Drop wrappers that do not change what runs.
+  // Resolve wrapper operands only far enough to identify the literal command.
   while (out.length > 0) {
-    const head = out[0] ?? ''
-    if (/^(?:sudo|command|exec|nohup|time|nice|doas)$/.test(head) || /^\w+=/.test(head)) out.shift()
-    else if (head === 'env') out.shift()
-    else break
+    const head = (out[0] ?? '').replace(/^.*\//, '')
+    if (/^\w+=/.test(head)) { out.shift(); continue }
+    if (!/^(?:sudo|command|exec|nohup|time|nice|doas|env|chroot)$/.test(head)) break
+    out.shift()
+    while ((out[0] ?? '').startsWith('-')) {
+      const option = out.shift() ?? ''
+      if (option === '--') break
+      if ((head === 'env' && ['-C','-u','-S','--chdir','--unset','--split-string'].includes(option)) || (head === 'sudo' && ['-D','-u','-g','-p','--chdir','--user','--group','--prompt'].includes(option)) || (head === 'nice' && option === '-n')) out.shift()
+    }
+    if (head === 'chroot') out.shift()
   }
   return out
 }
@@ -259,6 +265,24 @@ export function protectedWrite(path: string, guardRoots: string | readonly strin
  * `extra` holds the person's own patterns (userConfig `extraDenyPatterns`);
  * an invalid one throws, and the caller turns the throw into a deny.
  */
+// Pure lexical checks cannot resolve cwd or shell expansions. Explicit writes
+// in those contexts fail closed; ordinary build/test commands still reach Go.
+export function ambiguousMutation(command: string): Verdict | undefined {
+  const c = normalize(command)
+  const changesDirectory = /(?:^|[\s;&|()])(?:cd|pushd|popd|chroot)\b|\b(?:env|sudo)\b[^;&|\n]*(?:--chdir(?:=|\s)|-C(?:\S+|\s|$)|-D(?:\S+|\s|$))|\bfind\b[^;&|\n]*-execdir\b/i.test(c)
+  for (const segment of segments(c)) {
+    const w = words(segment)
+    const head = (w[0] ?? '').replace(/^.*\//, '')
+    if (['rm','cp','mv','install','ln','chmod','chown','chflags','xattr','truncate','shred','unlink','tee','dd','rsync'].includes(head) || (head === 'sed' && w.some(a => /^-[^-]*i/.test(a) || a.startsWith('--in-place')))) {
+      if (changesDirectory || w.slice(1).some(a => /[$`*?{[]/.test(a))) return { rule: 'ambiguous_mutation', reason: 'mutation with unresolved directory or shell-expanded operands' }
+    }
+    if (head === 'find' && changesDirectory && w.includes('-delete')) return { rule: 'ambiguous_mutation', reason: 'delete with unresolved working directory' }
+  }
+  const fileRedirect = c.replace(/2>&1/g, '')
+  if (/>/.test(fileRedirect) && (changesDirectory || /[$`*?{[]/.test(fileRedirect))) return { rule: 'ambiguous_mutation', reason: 'file redirect with unresolved directory or shell expansion' }
+  return undefined
+}
+
 export function checkCommand(command: unknown, guardRoot?: string, extra: readonly string[] = [], home?: string, scannerPaths: readonly string[] = []): Verdict | undefined {
   if (typeof command !== 'string') throw new TypeError(`shell command is ${typeof command}, not a string`)
   const c = normalize(command)
@@ -266,6 +290,8 @@ export function checkCommand(command: unknown, guardRoot?: string, extra: readon
     const re = new RegExp(source, 'i')
     if (re.test(c)) return { rule: 'user_pattern', reason: `matches your extraDenyPatterns entry /${source}/` }
   }
+  const ambiguous = ambiguousMutation(command)
+  if (ambiguous) return ambiguous
   const rm = rmVerdict(c)
   if (rm) return rm
   for (const rule of COMMAND_RULES) {

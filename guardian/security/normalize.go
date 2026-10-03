@@ -18,15 +18,36 @@ import (
 
 // NormalizeInput applies a series of transformations to defeat evasion techniques
 // that bypass regex-based detection. The original input is preserved for reporting;
-// only the normalized copy is used for pattern matching.
+// DetectionInputs supplies original and normalized copies for matching.
 //
 // Pipeline order matters — each step feeds the next:
 //  1. NFKC Unicode normalization (Cyrillic/Greek homoglyphs → ASCII)
 //  2. Strip zero-width characters (U+200B, U+200C, U+200D, U+FEFF, U+2060, U+180E)
 //  3. Normalize Unicode mathematical symbols (U+1D400–U+1D7FF → ASCII)
-//  4. Strip HTML concealment (display:none, font-size:0, visibility:hidden)
+//  4. Unwrap HTML comments without discarding hidden text or attributes
 //  5. Decode contextual Base64 (only near trigger words like "decode", "base64")
-func NormalizeInput(s string) string {
+func NormalizeInput(s string) string { return normalizeInput(s, true) }
+
+// DetectionInputs preserves original and native-script evidence alongside the
+// confusable-folded view. A lossy transformation must never erase a signature.
+func DetectionInputs(s string) []string {
+	views := []string{s}
+	for _, v := range []string{normalizeInput(s, false), NormalizeInput(s)} {
+		seen := false
+		for _, old := range views {
+			if old == v {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			views = append(views, v)
+		}
+	}
+	return views
+}
+
+func normalizeInput(s string, foldConfusables bool) string {
 	if len(s) == 0 {
 		return s
 	}
@@ -37,7 +58,9 @@ func NormalizeInput(s string) string {
 
 	// Step 1b: Map Unicode confusables (Cyrillic, Greek, etc.) to ASCII lookalikes.
 	// NFKC doesn't handle cross-script homoglyphs since they're distinct canonical forms.
-	s = mapConfusables(s)
+	if foldConfusables {
+		s = mapConfusables(s)
+	}
 
 	// Step 2: Strip zero-width and invisible formatting characters.
 	s = stripZeroWidth(s)
@@ -46,8 +69,7 @@ func NormalizeInput(s string) string {
 	// U+1D400–U+1D7FF (math bold, italic, script, etc.) → ASCII equivalents.
 	s = normalizeMathSymbols(s)
 
-	// Step 4: Strip HTML concealment — elements designed to hide text from users
-	// but still parseable by LLMs (e.g., display:none, font-size:0).
+	// Step 4: Preserve hidden content and attributes; unwrap comment delimiters.
 	s = stripHTMLConcealment(s)
 
 	// Step 5: Contextual Base64 decoding — only decode when near trigger words.
@@ -306,36 +328,11 @@ func mapMathToASCII(r rune) (rune, bool) {
 	return r, false
 }
 
-// HTML concealment patterns — elements that hide text visually but not from LLM parsing.
-var htmlConcealmentPatterns = []*regexp.Regexp{
-	// Tags with display:none, visibility:hidden, font-size:0, opacity:0
-	regexp.MustCompile(`(?i)<[^>]+style\s*=\s*"[^"]*(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0|opacity\s*:\s*0)[^"]*"[^>]*>.*?</[^>]+>`),
-	regexp.MustCompile(`(?i)<[^>]+style\s*=\s*'[^']*(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0|opacity\s*:\s*0)[^']*'[^>]*>.*?</[^>]+>`),
-	// White-on-white text (color:white on white background, or color:#fff/#ffffff)
-	regexp.MustCompile(`(?i)<[^>]+style\s*=\s*"[^"]*color\s*:\s*(?:white|#fff(?:fff)?|rgb\s*\(\s*255\s*,\s*255\s*,\s*255\s*\))[^"]*"[^>]*>(.*?)</[^>]+>`),
-	// Zero-height/width elements
-	regexp.MustCompile(`(?i)<[^>]+style\s*=\s*"[^"]*(?:height\s*:\s*0|width\s*:\s*0|overflow\s*:\s*hidden)[^"]*"[^>]*>.*?</[^>]+>`),
-	// Hidden input fields with suspicious content
-	regexp.MustCompile(`(?i)<input[^>]+type\s*=\s*"hidden"[^>]*value\s*=\s*"([^"]*)"[^>]*/?\s*>`),
-	// HTML comments (can contain injection payloads)
-	regexp.MustCompile(`<!--[\s\S]*?-->`),
-}
-
-// stripHTMLConcealment removes HTML elements designed to hide text.
+// stripHTMLConcealment unwraps comments, retaining hidden element bodies AND
+// attributes. Dropping any part of a hidden element can erase attacker text.
+// This is a detection view, not an HTML renderer or sanitizer.
 func stripHTMLConcealment(s string) string {
-	if !strings.Contains(s, "<") {
-		return s
-	}
-
-	for _, pat := range htmlConcealmentPatterns {
-		s = pat.ReplaceAllString(s, " ")
-	}
-
-	// Collapse multiple spaces to single
-	spaceCollapse := regexp.MustCompile(`\s{2,}`)
-	s = spaceCollapse.ReplaceAllString(s, " ")
-
-	return strings.TrimSpace(s)
+	return strings.NewReplacer("<!--", "", "-->", "").Replace(s)
 }
 
 // base64TriggerPattern matches context words adjacent to Base64 candidates.

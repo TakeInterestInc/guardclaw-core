@@ -106,6 +106,23 @@ tail`, `echo $(date)`, `rm -rf ./build`, `rm -rf dist/`, `make && make test`,
 denies for any other reason stays denied, for example `sudo su -`,
 `crontab -e`, `find src -exec grep ...` and `git diff > /tmp/p.diff`.
 
+### Directory and expansion limits
+
+Explicit file mutations (`rm`, `cp`, `mv`, `tee` and related commands) are
+refused when a line changes directory (`cd`, `pushd`, `popd`, `chroot`,
+`env -C/--chdir`, `sudo -D`) or uses shell-expanded mutation operands.
+This includes variable-hidden scanner replacement. File redirection in an
+unresolved directory/expansion context is also refused. Standalone literal
+build cleanup and `cd src && npm test` retain their existing behavior.
+Separate the literal cleanup from a directory-changing command and let
+host permissions decide it in its actual working folder.
+
+These checks are conservative lexical rules: quoting can trigger a refusal,
+and they do not track persistent shell cwd, aliases, filesystem links or
+arbitrary program effects. A no-match verdict does not establish containment
+or scanner authenticity. Use host approval or a sandbox for those guarantees;
+keep scanner installation and upgrades outside the agent.
+
 ### Install the scanner
 
 ```
