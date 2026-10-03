@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "default": "ask",
+  "tools": {
+    "Read": "allow",
+    "Glob": "allow",
+    "Grep": "allow",
+    "Bash": "ask",
+    "Write": "ask",
+    "Edit": "ask",
+    "mcp__YOUR_SERVER__send_email": "ask"
+  }
+}

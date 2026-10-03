@@ -16,6 +16,26 @@ No LLM in the detection path, no telemetry, and no network calls by default.
 The one place that can resolve DNS is `security.URLValidator`, and only after
 you opt in (see [Network behavior](#network-behavior)).
 
+## Start with your agent (first draft)
+
+Give Claude Code, Codex or Cowork the checkout and ask it to read
+[AGENTS.md](AGENTS.md). It will find a [small setup workflow](docs/SETUP.md),
+[the supported-host matrix](docs/CAPABILITIES.md), and an
+[exact-tool personal policy template](examples/personal-policy.json).
+
+The new offline `guardclaw-hook` adapter supports Claude Code command hooks on
+macOS/Linux. It requests real host approval for configured send tools, adds
+known-pattern/protected-file checks, and writes [metadata-only chained receipts](docs/RECEIPTS.md)
+for each event it handles. Setup prints a preview; it never installs settings.
+Synthetic tests are not live integration certification. Keep native permissions:
+host hook timeouts/startup failures can leave the normal permission path active.
+
+Codex, cloud dots and Cowork have different boundaries. Their native approval
+setup is documented; this repository does not install a receipt-backed adapter
+for them. The [legacy Claude mod](claude-code-mod/README.md) has no personal
+policy or these receipts. Neither adapter is an arbitrary-shell containment
+sandbox. We will share improvements as this draft develops.
+
 ## Install
 
 Requires Go 1.26.6 or newer.
@@ -134,9 +154,12 @@ non-`allow` decision. See [CONTRIBUTING.md](CONTRIBUTING.md) and the
 
 ## Scope
 
-This repository is the detection engine and its baseline pattern set. It does
-not include an agent runtime, action routing, decision receipts, a hosted
-control plane or agent adapters, and nothing here depends on a hosted service.
+This repository contains the detection engine, baseline patterns, a legacy
+Claude Code mod, and the bounded offline Claude command-hook/personal-policy/
+receipt adapter described above. It does not include an agent runtime, generic
+action proxy, hosted control plane, account integration or cloud installer.
+Nothing here depends on a hosted service. Pattern no-match, instructions and
+plain receipt hashes provide neither complete protection nor writer authenticity.
 
 ## License
 
