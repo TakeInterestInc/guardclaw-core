@@ -211,11 +211,15 @@ func TestCLICancellationTerminatesWithoutReport(t *testing.T) {
 		_ = cmd.Wait()
 		t.Fatal("child did not install signal handler")
 	}
+	signalledAt := time.Now()
 	if err = cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
 	if code := exitCode(cmd.Wait()); code != 2 {
 		t.Fatalf("cancellation exit %d", code)
+	}
+	if time.Since(signalledAt) > 2*time.Second {
+		t.Fatal("cancellation did not terminate promptly")
 	}
 	if out.Len() != 0 || stderr.Len() != 0 {
 		t.Fatal("cancelled process emitted report or raw diagnostics")
