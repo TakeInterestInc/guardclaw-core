@@ -140,8 +140,17 @@ denied outright: `;` `|` `&` a newline, a backtick, `$(`, `(`, `)`, `${`,
 `<(` and `>(`, `eval`, `exec`, `source`, `sudo`, `doas`, `su`, `xargs`,
 `sh -c` / `bash -c` / `zsh -c`, an interpreter given code with `-c` or `-e`,
 `find` with `-exec` or `-delete`, and a command led by a wrapper such as
-`nice`, `nohup`, `env`, `timeout` or `.`. A single plain command is checked
-by the JavaScript rules. A scanner timeout in normal mode denies that call
+`nice`, `nohup`, `env`, `timeout` or `.`. So is a `$'..'` escape, a command
+name the shell expands first (a variable, a glob, a brace list), and a
+command the engine judges by its arguments (`crontab`, `ngrok`, `socat`,
+`ssh-keygen`, `launchctl`, `systemctl`, `kill` and the like). A single plain
+command is then checked by the JavaScript rules, which carry the Go
+agent-mode rm rule: a recursive `rm` passes only when every target is a plain
+relative path inside the folder (optional `./`, segments of
+`[A-Za-z0-9._-]`, no `.` or `..` segment, no glob, `~`, `$` or leading `/`).
+`rm -rf ./build`, `dist/` and `node_modules` pass; `rm -rf ./../x` does not.
+The mod's tests check that degraded mode denies every input in the Go
+agent-mode deny corpus (`guardian/security/testdata/agent_deny_corpus.json`). A scanner timeout in normal mode denies that call
 and never switches the session to degraded.
 
 ## Files: checked in JavaScript, both modes

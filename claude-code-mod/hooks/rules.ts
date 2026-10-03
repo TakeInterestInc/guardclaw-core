@@ -147,6 +147,19 @@ function isDangerousRmTarget(target: string): boolean {
  * home folder, anything in a home dot folder or ~/Library, a top-level system
  * folder, `.`, `..` or a bare glob.
  */
+/**
+ * A plain in-tree relative path, the same definition as Go's isPlainRelPath
+ * (guardian/security/agent_command.go): an optional leading `./`, segments of
+ * [A-Za-z0-9._-] separated by `/`, an optional trailing `/`, and no empty,
+ * `.` or `..` segment. So no glob, no `~`, no `$` and no leading `/`.
+ */
+export function isPlainRelPath(t: string): boolean {
+  if (!/^(?:\.\/)?[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\/?$/.test(t)) return false
+  const rest = t.replace(/^\.\//, '').replace(/\/$/, '')
+  if (rest === '') return false
+  return rest.split('/').every(seg => seg !== '' && seg !== '.' && seg !== '..')
+}
+
 export function rmVerdict(command: string): Verdict | undefined {
   for (const segment of segments(command)) {
     const w = words(segment)
@@ -168,6 +181,11 @@ export function rmVerdict(command: string): Verdict | undefined {
       const rule = hit.startsWith('~') || HOME_DIR.test(hit) ? 'rm_rf_home' : hit.startsWith('/') ? 'rm_rf_root' : hit.includes('*') ? 'rm_rf_glob' : 'rm_rf_dot'
       return { rule, reason: `recursive rm of ${hit}` }
     }
+    // The Go agent-mode rule: a recursive rm passes only when every target is
+    // a plain in-tree relative path, so `..`, globs, `~`, `$` and absolute
+    // paths are all denied.
+    const odd = targets.find(t => !isPlainRelPath(t))
+    if (odd !== undefined) return { rule: 'rm_rf_not_plain', reason: `recursive rm of ${odd}, which is not a plain path inside this folder` }
   }
   return undefined
 }
@@ -285,9 +303,25 @@ const DEGRADED_TOKENS: readonly Rule[] = [
   { name: 'degraded_shell_c', re: /(?:^|[\s/])(?:ba|z|k|c|tc|da|fi)?sh\s+(?:-\w+\s+)*-\w*c\b/i, reason: 'runs a string through a shell (sh -c)' },
   { name: 'degraded_interpreter_e', re: /(?:^|[\s/])(?:python[0-9.]*|perl|ruby|node|php|osascript|lua|tclsh)\s+(?:-\S+\s+)*-(?:c|e|-eval)\b/i, reason: 'runs code passed on the command line through an interpreter' },
   { name: 'degraded_find_exec', re: /\bfind\b.*\s-(?:exec|execdir|ok|okdir|delete)\b/i, reason: 'find with -exec or -delete' },
+  { name: 'degraded_ansi_c_quote', re: /\$'/, reason: "uses $'..' escapes, which can spell any word" },
 ]
 
 const DEGRADED_LEAD = /^(?:nice|nohup|env|command|time|timeout|stdbuf|ionice|chroot|watch|script|busybox|unbuffer|caffeinate|setsid|\.)$/i
+
+// Commands the Go engine denies by name in strict mode (persistence, tunnels,
+// key generation, escalation, service control): without the engine there is
+// nothing to judge their arguments with.
+const DEGRADED_RISKY_LEAD = /^(?:crontab|at|batch|ngrok|chisel|iodine|socat|nc|ncat|netcat|ssh-keygen|launchctl|systemctl|service|pkexec|chattr|chflags|kill|pkill|killall)$/i
+
+/** A command name the shell would expand (a variable, a glob, a brace list); `[` and `[[` are the test command. */
+function unreadableName(word: string): boolean {
+  if (word === '[' || word === '[[') return false
+  return /[$`?*[{]/.test(word)
+}
+
+function firstWord(command: string): string {
+  return command.trim().split(/\s+/).filter(w => !/^\w+=/.test(w))[0] ?? ''
+}
 
 /** The first word a command runs, after VAR=value assignments, by its base name. */
 function leadWord(command: string): string {
@@ -301,7 +335,11 @@ export function degradedVerdict(command: unknown, guardRoot?: string, extra: rea
   for (const rule of DEGRADED_TOKENS) {
     if (rule.re.test(command) || rule.re.test(c)) return { rule: rule.name, reason: `${rule.reason}, and the GuardClaw scanner is not installed, so it cannot be checked` }
   }
+  if (unreadableName(firstWord(command)) || unreadableName(firstWord(c))) {
+    return { rule: 'degraded_unreadable_name', reason: 'runs a command whose name the shell expands first (a variable, a glob or a brace list), and the GuardClaw scanner is not installed, so it cannot be checked' }
+  }
   if (DEGRADED_LEAD.test(leadWord(c))) return { rule: 'degraded_wrapper', reason: `runs another command through ${leadWord(c)}, and the GuardClaw scanner is not installed, so it cannot be checked` }
+  if (DEGRADED_RISKY_LEAD.test(leadWord(c))) return { rule: 'degraded_risky_command', reason: `runs ${leadWord(c)}, which the GuardClaw engine judges by its arguments, and the scanner is not installed` }
   return checkCommand(command, guardRoot, extra, home, scannerPaths)
 }
 

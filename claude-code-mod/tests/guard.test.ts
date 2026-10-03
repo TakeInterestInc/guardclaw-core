@@ -13,7 +13,7 @@
 
 import type { On } from 'claude-code'
 import { describe, expect, mock, test, tier } from 'claude-code/testing'
-import { MUST_ALLOW, MUST_ALLOW_SIMPLE, MUST_DENY, SCANNER_ANSWERS } from './scanner-fixture.ts'
+import { DEGRADED_MUST_DENY, MUST_ALLOW, MUST_ALLOW_SIMPLE, MUST_DENY, SCANNER_ANSWERS } from './scanner-fixture.ts'
 import { DEFAULT_TRUSTED_MARKETPLACES, trustedMarketplaceOf } from '../hooks/rules.ts'
 
 tier('prepend')
@@ -516,4 +516,26 @@ describe('the scanner protects itself', () => {
     scanner(on)
     expect((await bash($, 'git status')).result).toBe(RAN)
   })
+})
+
+describe('degraded mode denies the whole Go agent-mode deny corpus', () => {
+  for (const command of DEGRADED_MUST_DENY) {
+    test(`degraded denies: ${command}`, WITH_SCANNER, async ($, on) => {
+      engine(on)
+      const r = await bash($, command)
+      expect(denied(r), `degraded mode let ${command} through: ${JSON.stringify(r)}`).toBe(true)
+    })
+  }
+  for (const command of ['find .. -delete', 'find ./x/../.. -name y -delete', 'find ./build/.. -exec rm -r {} +', 'ls | xargs rm -r', 'echo ./../x | xargs rm -rf']) {
+    test(`degraded denies find/xargs removal: ${command}`, WITH_SCANNER, async ($, on) => {
+      engine(on)
+      expect(denied(await bash($, command))).toBe(true)
+    })
+  }
+  for (const command of ['rm -rf ./build', 'rm -rf dist/', 'rm -rf node_modules', 'rm -rf ./build node_modules dist/']) {
+    test(`degraded allows: ${command}`, WITH_SCANNER, async ($, on) => {
+      engine(on)
+      expect((await bash($, command)).result).toBe(RAN)
+    })
+  }
 })

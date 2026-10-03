@@ -185,6 +185,16 @@ func renderModFixture(t *testing.T) string {
 	fmt.Fprintf(&b, "export const MUST_ALLOW: readonly string[] = %s\n\n", jsonText(t, agentMustAllow))
 	b.WriteString("// Single plain commands, allowed even with the scanner missing.\n")
 	fmt.Fprintf(&b, "export const MUST_ALLOW_SIMPLE: readonly string[] = %s\n\n", jsonText(t, mustAllowCommands))
+	corpus, err := os.ReadFile(filepath.FromSlash("../../guardian/security/testdata/agent_deny_corpus.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var agentCorpus []string
+	if err := json.Unmarshal(corpus, &agentCorpus); err != nil {
+		t.Fatal(err)
+	}
+	b.WriteString("// The whole Go agent-mode deny corpus (guardian/security/testdata/\n// agent_deny_corpus.json): degraded mode must deny each one too.\n")
+	fmt.Fprintf(&b, "export const DEGRADED_MUST_DENY: readonly string[] = %s\n\n", jsonText(t, agentCorpus))
 	b.WriteString("export const SCANNER_ANSWERS: Readonly<Record<string, ScannerAnswer>> = {\n")
 	seen := map[string]bool{}
 	all := append(append(append([]string{}, agentMustDeny...), agentMustAllow...), extraFixtureCommands...)
