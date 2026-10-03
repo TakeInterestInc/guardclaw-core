@@ -71,7 +71,7 @@ func CheckAgentCommand(input string) *CommandInjectionResult {
 	if input == "" {
 		return none
 	}
-	w := &agentWalker{defined: definedNames(input)}
+	w := &agentWalker{defined: definedNames(input), cwdChanged: agentChangesDirectory(input)}
 	for _, s := range []string{input, NormalizeInput(input)} {
 		if r := w.strictLine(s); r != nil {
 			return r
@@ -100,12 +100,43 @@ func agentResult(name string, category CommandInjectionCategory, score float64) 
 }
 
 type agentWalker struct {
-	depth   int
-	defined map[string]bool // functions and aliases the line itself defines
+	depth      int
+	defined    map[string]bool // functions and aliases the line itself defines
+	cwdChanged bool            // cwd-sensitive effects cannot be resolved by this API
 }
 
 // strictLine runs every strict rule and self-protection over s and returns
 // the strongest fired rule that is not relaxable for s.
+// Directory state and arbitrary expansions cannot be proved safe by this
+// lexical API. Refuse explicit mutation when the command changes directory,
+// and refuse expansion-bearing mutation operands. Build/test commands retain
+// their existing behavior; callers still need host approval or a sandbox.
+var agentDirectoryChange = regexp.MustCompile(`(?i)(?:^|[\s;&|()])(?:cd|pushd|popd|chroot)\b|\b(?:env|sudo)\b[^;&|\n]*(?:--chdir(?:=|\s)|-C(?:\S+|\s|$)|-D(?:\S+|\s|$))|\bfind\b[^;&|\n]*-execdir\b`)
+
+func agentChangesDirectory(s string) bool {
+	s = strings.NewReplacer("\"", "", "'", "", "\\", "").Replace(s)
+	return agentDirectoryChange.MatchString(s)
+}
+
+var agentMutators = map[string]bool{
+	"rm": true, "cp": true, "mv": true, "install": true, "ln": true,
+	"chmod": true, "chown": true, "chflags": true, "xattr": true,
+	"truncate": true, "shred": true, "unlink": true, "tee": true,
+	"sed": true, "dd": true, "rsync": true,
+}
+
+func agentMutates(name string, args []shWord) bool {
+	if name != "sed" {
+		return agentMutators[name]
+	}
+	for _, a := range args {
+		if strings.HasPrefix(a.text, "--in-place") || (strings.HasPrefix(a.text, "-") && !strings.HasPrefix(a.text, "--") && strings.Contains(a.text[1:], "i")) {
+			return true
+		}
+	}
+	return false
+}
+
 func (w *agentWalker) strictLine(s string) *CommandInjectionResult {
 	if name, ok := MatchSelfProtection(s); ok {
 		return agentResult(name, CmdCategoryDestructive, 1.0)
@@ -493,6 +524,30 @@ func (w *agentWalker) command(words []shWord) *CommandInjectionResult {
 		return agentResult("agent_unevaluable_command", CmdCategoryEscape, 1.0)
 	}
 	name, args, _ := splitCommand(words)
+	if agentMutates(name, args) {
+		if w.cwdChanged {
+			return agentResult("agent_cwd_mutation", CmdCategoryDestructive, 1.0)
+		}
+		for _, a := range args {
+			if strings.ContainsAny(a.text, "$`*?{[") {
+				return agentResult("agent_ambiguous_mutation", CmdCategoryDestructive, 1.0)
+			}
+		}
+	}
+	// The parser retains redirects in word text. FD copies do not write files.
+	for _, word := range words {
+		t := strings.ReplaceAll(word.text, "2>&1", "")
+		if strings.Contains(t, ">") && (w.cwdChanged || strings.ContainsAny(wordTexts(words), "$`*?{[")) {
+			return agentResult("agent_ambiguous_redirect", CmdCategoryRedirect, 1.0)
+		}
+	}
+	if name == "find" && w.cwdChanged {
+		for _, a := range args {
+			if a.text == "-delete" {
+				return agentResult("agent_cwd_mutation", CmdCategoryDestructive, 1.0)
+			}
+		}
+	}
 	if w.defined[name] {
 		return agentResult("agent_defined_function", CmdCategoryEscape, 1.0)
 	}
