@@ -16,6 +16,12 @@ import (
 func main() { os.Exit(runCLI(10*time.Second, os.Args[1:])) }
 
 func runCLI(deadline time.Duration, args []string) int {
+	return runCLIReady(deadline, args, nil)
+}
+
+// ready is an optional in-process test synchronization callback. Production
+// passes nil; no environment flag, output protocol or execution path is added.
+func runCLIReady(deadline time.Duration, args []string, ready func()) int {
 	// Independent termination must not wait for a blocked stdin/stdout writer.
 	watchdog := time.AfterFunc(deadline, func() { os.Exit(2) })
 	defer watchdog.Stop()
@@ -34,5 +40,8 @@ func runCLI(deadline time.Duration, args []string) int {
 		case <-done:
 		}
 	}()
+	if ready != nil {
+		ready()
+	}
 	return report.Run(args, os.Stdin, os.Stdout)
 }

@@ -34,7 +34,22 @@ func TestCLIProcess(t *testing.T) {
 	if mode == "blocked-logging" {
 		go func() { time.Sleep(25 * time.Millisecond); log.Print(privateSentinel); slog.Error(privateSentinel) }()
 	}
-	os.Exit(runCLI(250*time.Millisecond, args))
+	deadline := 5 * time.Second
+	if mode == "blocked-logging" || mode == "blocked-output" {
+		deadline = 250 * time.Millisecond
+	}
+	os.Exit(runCLIReady(deadline, args, func() {
+		if mode == "cancel" {
+			f := os.NewFile(3, "synthetic-ready")
+			if f == nil {
+				os.Exit(3)
+			}
+			if _, err := f.Write([]byte{1}); err != nil {
+				os.Exit(3)
+			}
+			_ = f.Close()
+		}
+	}))
 }
 
 func childCommand(t *testing.T, mode string) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer) {
@@ -43,7 +58,7 @@ func childCommand(t *testing.T, mode string) (*exec.Cmd, *bytes.Buffer, *bytes.B
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
 	cmd := exec.CommandContext(ctx, exe, "-test.run=^TestCLIProcess$")
 	cmd.Env = append(os.Environ(), "GUARDCLAW_TEST_CHILD="+mode)
@@ -138,7 +153,7 @@ func TestCLIWatchdogBlockedOutput(t *testing.T) {
 	if err = syscall.SetNonblock(fd, false); err != nil {
 		t.Fatal(err)
 	}
-	cmd, _, stderr := childCommand(t, "normal")
+	cmd, _, stderr := childCommand(t, "blocked-output")
 	cmd.Stdout = w
 	cmd.Stdin = strings.NewReader("Buy apples.\n")
 	start := time.Now()
@@ -160,7 +175,14 @@ func TestCLIWatchdogBlockedOutput(t *testing.T) {
 	}
 }
 func TestCLICancellationTerminatesWithoutReport(t *testing.T) {
-	cmd, out, stderr := childCommand(t, "normal")
+	cmd, out, stderr := childCommand(t, "cancel")
+	readyRead, readyWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readyRead.Close()
+	defer readyWrite.Close()
+	cmd.ExtraFiles = []*os.File{readyWrite}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +191,19 @@ func TestCLICancellationTerminatesWithoutReport(t *testing.T) {
 	if err = cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(75 * time.Millisecond)
+	_ = readyWrite.Close()
+	ready := make(chan error, 1)
+	go func() { var b [1]byte; _, err := io.ReadFull(readyRead, b[:]); ready <- err }()
+	select {
+	case err := <-ready:
+		if err != nil {
+			t.Fatalf("child readiness: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatal("child did not install signal handler")
+	}
 	if err = cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
