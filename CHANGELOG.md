@@ -5,6 +5,29 @@ what changes between source releases.
 
 ## 0.2.0 (unreleased)
 
+### Added: a Claude Code mod, and a single-command scanner mode
+
+- `claude-code-mod/` is GuardClaw as a Claude Code mod (2.1.287+). It is a
+  thin adapter: every shell command the model asks for is judged by
+  `guardclaw-scan --stdin-command --agent`, and it degrades to a strict JavaScript gate
+  when the scanner is missing. See `claude-code-mod/README.md`.
+- `guardclaw-scan --stdin-command` reads one command on standard input, runs
+  `CheckCommandInjection` on it as written and after `NormalizeInput`, prints
+  one JSON line and exits 1 (deny), 0 (allow) or 2 (not scanned).
+- `security.CheckAgentCommand` and `guardclaw-scan --stdin-command --agent`:
+  the strict verdict, except that a rule in the chaining or substitution
+  category does not deny on its own, and `stderr_redirect` (`2>&1`),
+  `pipe_xargs`, `pipe_tee` and `rm_rf_dot` are set aside only when a precise
+  check passes. Every other strict rule still denies; the test
+  `TestAgentNeverDeniesLessThanStrict` pins that. Each simple command inside
+  the line (wrappers opened) is held to the same rule, and a command name that
+  cannot be read without running something (a variable, a substitution, a
+  glob, a `$'..'` escape, a function the line defines) denies.
+  `CheckCommandInjection` and the strict mode are unchanged.
+- New command pattern `pipe_shell_wrapped`: a pipe into a shell spelled by
+  path (`| /bin/bash`), behind a wrapper (`| sudo -E bash`, `| env bash`) or
+  with stderr merged (`|& sh`). `pipe_shell` missed all three.
+
 ### Breaking: the default protected-path list is smaller
 
 `DefaultProtectedPaths` no longer lists any application's source layout. It

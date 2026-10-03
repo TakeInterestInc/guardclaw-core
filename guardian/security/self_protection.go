@@ -395,6 +395,21 @@ func (st *spState) list(cmds []shCmd) (string, bool) {
 // removed), its arguments and any leading VAR=value assignments, skipping
 // wrappers such as sudo, env and nohup.
 func splitCommand(words []shWord) (string, []shWord, []shWord) {
+	i, assigns := commandIndex(words)
+	if i >= len(words) {
+		return "", nil, assigns
+	}
+	name := strings.ToLower(words[i].text)
+	if j := strings.LastIndexAny(name, `/\`); j >= 0 {
+		name = name[j+1:]
+	}
+	name = strings.TrimSuffix(name, ".exe")
+	return name, words[i+1:], assigns
+}
+
+// commandIndex returns the index of the word a simple command runs, after
+// leading VAR=value assignments, keywords and wrappers, and the assignments.
+func commandIndex(words []shWord) (int, []shWord) {
 	var assigns []shWord
 	i := 0
 	for i < len(words) {
@@ -416,15 +431,7 @@ func splitCommand(words []shWord) (string, []shWord, []shWord) {
 		}
 		break
 	}
-	if i >= len(words) {
-		return "", nil, assigns
-	}
-	name := strings.ToLower(words[i].text)
-	if j := strings.LastIndexAny(name, `/\`); j >= 0 {
-		name = name[j+1:]
-	}
-	name = strings.TrimSuffix(name, ".exe")
-	return name, words[i+1:], assigns
+	return i, assigns
 }
 
 // skipWrapper skips a wrapper command and its options, returning the index

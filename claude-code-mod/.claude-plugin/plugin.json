@@ -1,0 +1,50 @@
+{
+  "name": "guardclaw",
+  "version": "0.3.0",
+  "description": "GuardClaw guard for Claude Code: runs every shell command the model asks for through the GuardClaw Go engine (guardclaw-scan) and denies what it flags, protects credential and settings files from the file tools, and refuses other mods that could approve tool calls. Deny-only and fail-closed.",
+  "author": {
+    "name": "TakeInterest Inc."
+  },
+  "homepage": "https://github.com/TakeInterestInc/guardclaw-core",
+  "repository": "https://github.com/TakeInterestInc/guardclaw-core",
+  "license": "Apache-2.0",
+  "keywords": [
+    "security",
+    "guard",
+    "hooks",
+    "guardclaw"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "scannerPath": {
+      "type": "string",
+      "title": "guardclaw-scan path",
+      "description": "The guardclaw-scan binary that judges shell commands (install: go install github.com/TakeInterestInc/guardclaw-core/cmd/guardclaw-scan@latest). An absolute path is safer than a bare name, which is looked up on PATH. When it cannot be run, the guard stays on in a degraded mode that denies every compound or wrapped command.",
+      "default": "guardclaw-scan"
+    },
+    "allowMods": {
+      "type": "string",
+      "multiple": true,
+      "title": "Mods allowed to hook tool approval",
+      "description": "Exact name@marketplace ids of mods that may load even though they hook tool approval (tool.call, tool.check, session.append, classic.PreToolUse, classic.PermissionRequest, config.set), answer the guard's own calls (process.run, process.spawn, fs.stat, env.get), or call process.run, process.spawn, fs.write, config.set, tool.call, http.fetch or env.set. A bare name or a name@inline id (a --plugin-dir folder) is never matched.",
+      "default": []
+    },
+    "trustedMarketplaces": {
+      "type": "string",
+      "multiple": true,
+      "title": "Trusted marketplaces",
+      "description": "Marketplaces whose mods load even when they use the risky events or calls: the part after @ in a mod's provenance. builtin is the plugins bundled in Claude Code; claude-plugins-official is Anthropic's own marketplace. inline (a --plugin-dir folder) is ignored here. Remove an entry to hold that marketplace to the same rule as every other.",
+      "default": [
+        "builtin",
+        "claude-plugins-official"
+      ]
+    },
+    "extraDenyPatterns": {
+      "type": "string",
+      "multiple": true,
+      "title": "Extra deny patterns",
+      "description": "JavaScript regular expressions matched (case-insensitive) against every shell command, before the scanner runs. A pattern that does not compile denies every shell command until it is fixed, so a typo never opens the guard.",
+      "default": []
+    }
+  }
+}
