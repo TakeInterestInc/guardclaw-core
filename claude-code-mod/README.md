@@ -1,91 +1,170 @@
 # GuardClaw for Claude Code (mod)
 
 A deny-only guard that runs inside Claude Code as a mod: a plugin of function
-hooks (Claude Code 2.1.287 and later, early access). It refuses dangerous tool
-calls before anything beneath it can run or approve them, and it refuses to
-load other mods that could approve tool calls.
+hooks (Claude Code 2.1.287 and later, early access). Every shell command the
+model asks to run is judged by the GuardClaw Go engine, credential and
+settings files are kept away from the file tools, and other mods that could
+approve tool calls are refused before they load.
 
 ```
  tool call from the model
         |
         v
- +------------------------------+   deny  ->  the model gets the reason as an error result
- | guardclaw (prependPlugins)   |-------->
- +------------------------------+
-        | next(e): allowed
+ +-------------------------------+  shell command on stdin, no shell  +------------------------------+
+ | guardclaw (prependPlugins)    |----------------------------------->| guardclaw-scan               |
+ |  - file paths checked in JS   |<-----------------------------------|  --stdin-command (Go engine) |
+ +-------------------------------+  exit 1 deny, 0 allow, else deny   +------------------------------+
+        | next(e): allowed                  deny -> the model gets the reason as an error result
         v
- +------------------------------+
- | your other mods (user tier)  |   a mod here could approve a call; guardclaw
- +------------------------------+   refuses such mods at plugin.register
+ +-------------------------------+
+ | your other mods (user tier)   |   a mod here could approve a call; guardclaw
+ +-------------------------------+   refuses such mods at plugin.register
         |
         v
  settings hooks (PreToolUse), permission rules, the tool itself
 ```
 
-## Why a mod as well as settings hooks
+## Threat model
 
-Settings hooks (`PreToolUse` and the rest) sit beneath every mod. The mods
-documentation says a mod that approves tool calls can approve a call that one
-of your own `PreToolUse` hooks blocked. A guard that lives only in settings
-hooks, which is how the GuardClaw command hooks ship today, can be outvoted by
-any mod you install. This mod sits above them.
+It guards **model-initiated tool calls**: what the model asks Bash, Monitor,
+the file tools or an MCP tool to do. It does not watch what another mod does
+on its own. A mod that runs programs through `$.process.run`, writes files
+through `$.fs.write` or reaches the network never makes a tool call, so it is
+handled at admission instead: such a mod is refused before it loads (see
+below).
 
-## What it denies
+Settings hooks (`PreToolUse` and the rest) sit beneath every mod, and a mod
+that approves tool calls can approve a call one of your `PreToolUse` hooks
+blocked. A guard that lives only in settings hooks can be outvoted by any mod
+you install. This mod sits above them when it is seated in `prependPlugins`.
 
-Bash commands, matched after `$HOME` and `${HOME}` are spelled `~`:
+## Shell commands: the Go engine decides
 
-| Class | Examples | Go rule it is ported from |
-|---|---|---|
-| Destructive | `rm -rf ~`, `rm -rf /`, `rm -r -f /*`, `mkfs`, `dd of=/dev/disk0`, fork bomb | `rm_rf_*`, `mkfs`, `dd_device`, `fork_bomb` |
-| Pipe into a shell | `curl ... \| sh`, `wget -qO- ... \| sudo bash`, `bash <(curl ...)` | `curl_pipe_shell`, `pipe_shell` |
-| Base64 decoded and run | `echo ... \| base64 -d \| sh`, `eval "$(... \| base64 --decode)"` | `pipe_base64_decode`, `eval_var` |
-| Credential egress | `cat ~/.aws/credentials \| curl ...`, `curl -F f=@~/.ssh/id_ed25519 ...` | `curl_post_file`, `base64_curl`, `cat_credentials` |
-| Backdoors and persistence | `>> ~/.ssh/authorized_keys`, `cp x ~/.ssh/...`, `nc -l ... -e`, `/dev/tcp/` | `ssh_key_append`, `nc_listen_exec`, `bash_socket` |
-| Guard self-protection | `pkill guardclaw`, `launchctl unload ...guardclaw...`, editing this mod's folder | `guardclaw_*` |
+For `Bash`, `Monitor`, any tool whose input has a string `command`, and an MCP
+tool's `command`, `cmd`, `script` or `code` argument, the mod runs
 
-`Write`, `Edit`, `MultiEdit` and `NotebookEdit` into `~/.ssh`, `~/.aws`,
-`~/.gnupg`, cloud credential files, home-folder shell startup files,
-`Library/LaunchAgents`, `/etc`, Claude Code's managed settings, or this mod's
-own folder.
+```
+guardclaw-scan --stdin-command
+```
 
-The rules come from `guardian/security/command_injection.go` and
-`protected_paths.go` in this repo. Every deny reason names its rule, and where
-a rule maps one to one onto a Go rule it keeps the Go name, so a block can be
-traced to its source. Only the destructive,
-pipe-to-shell, egress, backdoor and self-protection rules are ported. The Go
-chaining, substitution and recon rules are left out, because a coding session
-runs `$(...)`, `&& rm` and `; ls` constantly. Two Go rules are narrower here:
-`rm -rf /tmp/build` and `rm -rf ./dist` pass (Go's `rm\s+-rf\s+/` and
-`rm\s+-rf\s+\.` deny them), and `| shasum` passes (Go's `\|\s*sh` has no word
-boundary).
+through `$.process.run` with the command on standard input and no shell in
+between. The scanner runs `CheckCommandInjection` from
+`guardian/security/command_injection.go` on the command as written and again
+after `NormalizeInput` (NFKC, homoglyph and zero-width folding), and prints one
+JSON line.
+
+| Scanner result | What the mod does |
+|---|---|
+| exit 1 | denies, naming the engine's rule (`rm_rf_home`, `pipe_shell_wrapped`, ...) |
+| exit 0 with `{"decision":"allow"}` | passes the call on with `next(e)` |
+| exit 2, any other exit, unparseable output, a crash or a 10 s timeout | denies **that call only** (`scanner_error`); the next call is scanned again |
+
+The mod runtime has no WebAssembly by design ("a module that needs compiled
+code runs it in a process of its own through `$.process.run`"), which is why
+the engine runs as a process rather than inside the mod.
+
+A JavaScript backstop (`hooks/rules.ts`, a partial hand-port of the Go rules)
+runs first and can only add denies. Your `extraDenyPatterns` run there too.
+
+**The engine is strict.** It is the same engine as the daemon and it denies
+command chaining and substitution, which coding sessions use. Measured with
+the scanner built from this repo: `cd src && npm test` (`and_chain`),
+`npm run build 2>&1 | tail -20` (`background_chain`), `echo $(date)`
+(`dollar_paren_subst`), `rm -rf ./build` (`rm_rf_dot`), `rm -rf /tmp/x`
+(`rm_rf_root`) and `git diff > /tmp/p.diff` (`redirect_tmp`) are all denied.
+`ls`, `git status`, `npm test`, `go test ./...`, `git log --oneline | head -5`
+and `python3 -m pytest` pass. Tuning the engine is a change to the Go rules,
+in one place, for the daemon and the mod alike.
+
+### Install the scanner
+
+```
+go install github.com/TakeInterestInc/guardclaw-core/cmd/guardclaw-scan@latest
+```
+
+Then set the `scannerPath` option to the absolute path of the binary (for
+example `~/go/bin/guardclaw-scan` spelled out in full). The default,
+`guardclaw-scan`, is looked up on `PATH`, and anything that can change `PATH`
+can change which program judges your commands.
+
+### Degraded mode: when the scanner is missing
+
+At `session.start` (and again after a hot reload) the mod probes the scanner
+once by asking it to judge `rm -rf /`. If it cannot be started, or it does not
+deny the probe, the session runs **degraded** and the status line says so with
+the install line:
+
+```
+GuardClaw: 0 blocked today · scanner missing, only simple shell commands run. Install: go install github.com/TakeInterestInc/guardclaw-core/cmd/guardclaw-scan@latest
+```
+
+In degraded mode every shell command holding a wrapper or metacharacter is
+denied outright: `;` `|` `&` a newline, a backtick, `$(`, `(`, `)`, `${`,
+`<(` and `>(`, `eval`, `exec`, `source`, `sudo`, `doas`, `su`, `xargs`,
+`sh -c` / `bash -c` / `zsh -c`, an interpreter given code with `-c` or `-e`,
+`find` with `-exec` or `-delete`, and a command led by a wrapper such as
+`nice`, `nohup`, `env`, `timeout` or `.`. A single plain command is checked
+by the JavaScript rules. A scanner timeout in normal mode denies that call
+and never switches the session to degraded.
+
+## Files: checked in JavaScript, both modes
+
+`Write`, `Edit`, `MultiEdit` and `NotebookEdit` are denied when the path,
+after `~`, `$HOME` and `${HOME}` are expanded, or the place it really lands
+(`$.fs.stat(path, { resolve: true }).realPath`, or its folder's for a new
+file), is:
+
+- `~/.ssh`, `~/.aws`, `~/.gnupg`, cloud and git credential files, home shell
+  startup and package-auth files, `Library/LaunchAgents` and `LaunchDaemons`,
+  `/etc`;
+- `~/.claude/settings.json`, `~/.claude/settings.local.json` and any project
+  `.claude/settings*.json` (hooks, permissions and enabled mods live there),
+  `.mcp.json`, and Claude Code's managed settings;
+- this mod's own folder, as loaded and as resolved.
+
+Matching ignores case, since the default macOS volume does. A symbolic link
+is judged by where it lands; a hard link or a case alias keeps its own
+spelling, so this is a deny-list and best effort, as the API notes.
 
 ## What it refuses to load
 
-At `plugin.register`, a later user-tier mod whose scanned hooks reach
-`tool.call`, `tool.check`, `session.append`, `classic.PreToolUse` or
-`classic.PermissionRequest` (globs such as `tool.*` and `*` count) is refused,
-and the reason is logged to the transcript. To load one you trust, add it to
-the `allowMods` option, ideally as `name@marketplace`, since a bare name is
-whatever that mod's own `plugin.json` says.
+At `plugin.register`, a later **user-tier or append-tier** mod is refused when
+its scanned `uses` show any of:
 
-## Fail closed
+- events `tool.call`, `tool.check`, `session.append`, `classic.PreToolUse`,
+  `classic.PermissionRequest`, `config.set` (it could approve a call, rewrite
+  a stored row or change settings), or `process.run`, `process.spawn`,
+  `fs.stat`, `env.get` (it could answer the guard's own calls, for example
+  hand the scanner call a clean verdict); globs such as `tool.*` and `*` count;
+- calls `process.run`, `process.spawn`, `fs.write`, `config.set`,
+  `tool.call`, `http.fetch` or `env.set`, or any `$.env.set` write (it could
+  run programs, write files, change settings, act as the model or repoint
+  `PATH`).
 
-- If a matcher throws, for example an `extraDenyPatterns` entry that is not a
-  valid regular expression, every call it would have checked is denied with
-  `matcher_error` in the reason.
-- If the hook throws past its own guard or runs out of time, its `.catch`
-  handler denies.
-- If the `plugin.register` check fails, the mod is refused.
+The reason is logged to the transcript. To load one you trust, add its exact
+`name@marketplace` provenance to `allowMods`. A bare name and a
+`name@inline` id (a `--plugin-dir` folder, whose name is whatever its own
+`plugin.json` says) never match. This is strict on purpose, and it refuses some
+well-known plugins (any that hook `tool.call` or call `fs.write`, for
+example) until you allowlist them.
 
-It never approves anything. Allowed calls go on with `next(e)` to whatever
-would have decided them anyway.
+## Fail closed, deny only
+
+- A matcher that throws (an `extraDenyPatterns` entry that does not compile,
+  a `Bash` call whose `command` is not a string) denies with `matcher_error`.
+- A hook that throws past its own guard or runs out of time is denied by its
+  `.catch` handler.
+- A `plugin.register` check that fails refuses the mod.
+- It never returns an allow or an approval. Allowed calls go on with
+  `next(e)` to whatever would have decided them anyway.
 
 ## What it uses
 
-`claude plugin validate` reports the whole surface: `$.clock.now`,
-`$.state.get` / `$.state.set` (one value, today's deny count), `$.ui.log` and
-`$.ui.status`. Network calls, process spawning, file reads and writes,
-environment reads and secrets are all absent from that list.
+`claude plugin validate claude-code-mod` reports the surface: `$.process.run`
+(the scanner, by argv, no shell), `$.fs.stat` (where a written path lands),
+`$.env.get("HOME")`, `$.clock.now`, `$.state.get` / `$.state.set` (one
+value, today's deny count), `$.ui.log` and `$.ui.status`. No network, no file
+writes, no environment writes.
 
 ## Install
 
@@ -104,7 +183,7 @@ Or from a checkout, for one session:
 claude --plugin-dir /path/to/guardclaw-core/claude-code-mod
 ```
 
-Then seat it first. Add it to `prependPlugins` so it runs before, and judges,
+**`prependPlugins` is required** for the guard to run before, and judge,
 every mod you install:
 
 ```json
@@ -112,59 +191,68 @@ every mod you install:
 ```
 
 (`guardclaw@guardclaw` is the marketplace install. A `--plugin-dir` load is
-keyed `guardclaw@inline`.)
+keyed `guardclaw@inline`.) Without it the mod loads in the user tier, and
+where it sits among your other mods, so which of them it judges, is not
+something it controls.
 
 In your own `~/.claude/settings.json` this works only on a machine with no
 managed settings and outside a Team or Enterprise plan. Where either applies,
 your administrator owns `prependPlugins` and lists it in managed settings. If
-the built-in `sec-default@builtin` guard loads for you, list GuardClaw after it.
-Without `prependPlugins` the mod still loads in the user tier, but where it
-sits among your other mods, and so which of them it gets to judge, is not
-something this mod controls.
+the built-in `sec-default@builtin` guard loads for you, list GuardClaw after
+it.
+
+**Managed-tier caveat.** In Claude Code 2.1.287 a plugin that managed
+settings enable but that is loaded from a copy (rather than the managed
+install) may still run in the user tier. Check where it sits before relying
+on it: a refusal logged by GuardClaw for a mod you know is earlier in the
+chain is the sign it is not first.
 
 Options (`/config`, or `pluginConfigs.guardclaw.options` in settings):
 
 | Option | Default | Meaning |
 |---|---|---|
-| `allowMods` | `[]` | Mods allowed to load even though they hook tool approval |
-| `extraDenyPatterns` | `[]` | Your own regular expressions, matched case-insensitively against every Bash command |
+| `scannerPath` | `guardclaw-scan` | The scanner binary; use an absolute path |
+| `allowMods` | `[]` | Exact `name@marketplace` ids allowed to load despite the admission rules |
+| `extraDenyPatterns` | `[]` | Your own regular expressions, matched case-insensitively against every shell command before the scanner runs |
 
-The status line under the prompt reads `GuardClaw: N blocked today` (UTC day,
-counted per session).
+The status line reads `GuardClaw: N blocked today` (UTC day), with the
+degraded notice appended when the scanner is missing.
 
 ## What it cannot do
 
-- **Crash, safe mode and a failed load remove it.** If the module fails to
-  load, or Claude Code runs with `--safe-mode` or hooks turned off, the guard is
-  absent and nothing here denies anything. That is the case for keeping the
-  GuardClaw settings hooks and the GuardClaw daemon running as well.
-- **It matches patterns and does no sandboxing.** A command spelled to slip past the
-  patterns (variables, aliases, a script that does the work, a symlink to a
-  protected path) gets through. Paths are matched by spelling and never resolved.
-- **It sees tool calls and nothing else a mod does.** A mod that runs programs
-  itself through `$.process.run` never makes a tool call. It is refused only if
-  it also hooks one of the events above.
-- **Ordering inside the user tier is not ours.** Only `prependPlugins` puts it
-  first.
-- **The mods API is early access** and can change between Claude Code releases.
-
-## How it relates to the GuardClaw daemon
-
-This mod is a fast first line inside one Claude Code session. The GuardClaw
-daemon is the long-lived guard on the machine, with the full rule set, policy,
-audit trail and coverage beyond Claude Code. Run both. The mod does not call
-the daemon in this version: it reaches no network and spawns no process.
+- **A crash, `--safe-mode` or a failed load unloads it.** If the module fails
+  to load, or Claude Code runs with `--safe-mode` or hooks turned off, the
+  guard is absent and nothing here denies anything. Keep the GuardClaw
+  settings hooks and the daemon running as well.
+- **It matches patterns and does no sandboxing.** A command spelled to slip
+  past the engine's patterns (a script that does the work, variables, aliases)
+  can get through, and the engine's verdict is only as good as its rules.
+- **Ordering inside the user tier is not its own.** Only `prependPlugins`
+  puts it first.
+- **The mods API is early access** and can change between releases.
 
 ## Develop
 
 ```
+go test -race ./...                       # includes the scanner corpus and fixture check
 claude plugin validate claude-code-mod
 claude plugin test claude-code-mod
 ```
 
-The tests in `tests/guard.test.ts` run each deny and allow case through the
-engine, load a real inline mod that tries to approve a call the guard denies,
-and check that a throwing matcher denies.
+The mod test kit runs no host processes (a test answers `process.run`
+itself), so `tests/scanner-fixture.ts` holds what `guardclaw-scan
+--stdin-command`, built from this repo, answers for every command the tests
+send. The Go test `TestModScannerFixture` fails whenever the scanner and the
+fixture disagree; regenerate with
+
+```
+go test ./cmd/guardclaw-scan -run TestModScannerFixture -update
+```
+
+`tests/guard.test.ts` runs the shared corpus (`MUST_DENY`, `MUST_ALLOW`)
+through the mod with the scanner present and again with it missing, and
+covers scanner failures, Monitor and MCP arguments, file paths and symbolic
+links, and admission with real inline mods.
 
 ## License
 

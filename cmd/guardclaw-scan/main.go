@@ -9,18 +9,83 @@
 // not fetch any threat-intelligence feed. It reads files (or directories) and
 // prints a readable risk report. Exit code is non-zero when any high/critical
 // finding fires, so it composes into CI.
+//
+// With --stdin-command it instead reads ONE shell command from standard input
+// and runs the command-injection checker on it (see runCommand). That is the
+// mode the Claude Code mod in claude-code-mod/ calls for every shell command
+// the model asks to run.
 package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/TakeInterestInc/guardclaw-core/guardian/security"
 	"github.com/TakeInterestInc/guardclaw-core/guardian/tiered"
 )
+
+// maxCommandBytes bounds what --stdin-command reads. A longer command is an
+// incomplete scan (exit 2), never a partial one.
+const maxCommandBytes = 1024 * 1024
+
+// commandVerdict is the one JSON line --stdin-command prints.
+type commandVerdict struct {
+	Decision string  `json:"decision"` // "deny" or "allow"
+	Rule     string  `json:"rule,omitempty"`
+	Category string  `json:"category,omitempty"`
+	Score    float64 `json:"score,omitempty"`
+	Reason   string  `json:"reason,omitempty"`
+}
+
+// runCommand scans one command read from stdin with CheckCommandInjection,
+// once as written and once after NormalizeInput (NFKC, homoglyph and
+// zero-width folding), and denies when either pass detects. It returns 1 for a
+// deny, 0 for an allow and 2 when the command could not be read whole.
+//
+// It deliberately does not use tiered.Engine.Scan: that engine is the general
+// input scanner (prompt injection, path traversal, secrets) and denies
+// ordinary commands such as `go test ./...` (triple_dot_traversal).
+func runCommand(stdin io.Reader, stdout, stderr io.Writer) int {
+	data, err := io.ReadAll(io.LimitReader(stdin, maxCommandBytes+1))
+	if err != nil {
+		fmt.Fprintln(stderr, "read stdin:", err)
+		return 2
+	}
+	if len(data) > maxCommandBytes {
+		fmt.Fprintf(stderr, "command longer than %d bytes; not scanned\n", maxCommandBytes)
+		return 2
+	}
+	command := string(data)
+	verdict := commandVerdict{Decision: "allow"}
+	for _, input := range []string{command, security.NormalizeInput(command)} {
+		r := security.CheckCommandInjection(input)
+		if r.Detected {
+			verdict = commandVerdict{
+				Decision: "deny",
+				Rule:     r.PatternName,
+				Category: string(r.Category),
+				Score:    r.Score,
+				Reason:   r.Reason,
+			}
+			break
+		}
+	}
+	line, err := json.Marshal(verdict)
+	if err != nil {
+		fmt.Fprintln(stderr, "encode verdict:", err)
+		return 2
+	}
+	fmt.Fprintln(stdout, string(line))
+	if verdict.Decision == "deny" {
+		return 1
+	}
+	return 0
+}
 
 func severityRank(s string) int {
 	switch s {
@@ -38,6 +103,9 @@ func severityRank(s string) int {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--stdin-command" {
+		os.Exit(runCommand(os.Stdin, os.Stdout, os.Stderr))
+	}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
@@ -46,6 +114,7 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "usage: guardclaw-scan <file-or-dir> [more paths...]")
+		fmt.Fprintln(stderr, "       guardclaw-scan --stdin-command < command.txt")
 		return 2
 	}
 
