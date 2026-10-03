@@ -6,7 +6,7 @@ No icon sets or installed browser runtime packages are shipped. Optional Apache 
 | --- | --- | --- | --- |
 | Original application/server/docs | Candidate 0.2.1 | Apache-2.0 (root LICENSE) | Yes, in candidate |
 | Canonical Core source at repository root | One scanner implementation unchanged from public `0052c301400c91f615d93d0605485f8b1bff4059`; Dot's report helper now imports it. Current registry tree `a0b591985209611ffc515a9ff676cea5eab83555` has 1,704 IDs; original 1,703-ID baseline remains accepted for report compatibility | Apache-2.0; root LICENSE and original attribution retained | Yes, source only |
-| `src/guardclaw-report.mjs`, `src/guardclaw-patterns.mjs` | Validator port and generated 1,703-ID registry | Apache-2.0, explicit SPDX headers; same Core LICENSE/NOTICE apply | Yes |
+| `src/guardclaw-report.mjs`, `src/guardclaw-patterns.mjs` | Validator port and generated 1,704-current / 1,703-legacy ID registries | Apache-2.0, explicit SPDX headers; same Core LICENSE/NOTICE apply | Yes |
 | aho-corasick | Optional helper Go dependency v1.0.3 | MIT; full notice under `../../third-party-notices/` | Notice/lock references only |
 | golang.org/x/text | Optional helper Go dependency v0.40.0 | BSD-3-Clause and PATENTS; full notices under `../../third-party-notices/` | Notices/lock references only |
 | Go | Optional helper build runtime, 1.26.6 tested | BSD-3-Clause/PATENTS; complete build-runtime notices included | Notices only, no binary |
