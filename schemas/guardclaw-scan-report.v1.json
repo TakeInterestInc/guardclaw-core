@@ -1,119 +1,278 @@
 {
-  "type": "object",
+  "$comment": "Schema is not an authenticity check. Import requires duplicate-key, byte/depth, exact UTC parse/order, arithmetic, finding-line uniqueness and attachment-context checks in the companion contract. Offline validators must not fetch remote schema URLs.",
+  "$id": "urn:takeinterest:guardclaw:scan-report:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "engine",
-    "subject",
-    "started_at",
-    "finished_at",
-    "status",
-    "outcome",
-    "coverage",
-    "findings",
-    "error"
-  ],
-  "properties": {
-    "schema_version": {
-      "const": "guardclaw.scan-report.v1"
-    },
-    "engine": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "module",
-        "baseline_tree",
-        "mode"
-      ],
-      "properties": {
-        "module": {
-          "const": "github.com/TakeInterestInc/guardclaw-core"
-        },
-        "baseline_tree": {
-          "enum": [
-            "a0b591985209611ffc515a9ff676cea5eab83555",
-            "336faa083fccb78a098cf2cf146df3e4d50c1d82"
-          ]
-        },
-        "mode": {
-          "const": "static_line_scan"
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "complete"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "coverage": {
+            "properties": {
+              "blank_lines": {
+                "type": "integer"
+              },
+              "input_bytes": {
+                "type": "integer"
+              },
+              "scanned_lines": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "total_lines": {
+                "type": "integer"
+              }
+            }
+          },
+          "error": {
+            "type": "null"
+          },
+          "outcome": {
+            "enum": [
+              "no_patterns_matched",
+              "review_needed"
+            ]
+          },
+          "subject": {
+            "type": "object"
+          }
         }
       }
     },
-    "subject": {
-      "anyOf": [
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "snapshot_id",
-            "revision"
-          ],
-          "properties": {
-            "snapshot_id": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-              "minLength": 36,
-              "maxLength": 36
-            },
-            "revision": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9007199254740991
-            }
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "no_content"
           }
-        },
-        {
-          "type": "null"
         }
-      ]
+      },
+      "then": {
+        "properties": {
+          "coverage": {
+            "properties": {
+              "blank_lines": {
+                "type": "integer"
+              },
+              "input_bytes": {
+                "type": "integer"
+              },
+              "scanned_lines": {
+                "const": 0
+              },
+              "total_lines": {
+                "type": "integer"
+              }
+            }
+          },
+          "error": {
+            "properties": {
+              "code": {
+                "const": "NO_CONTENT"
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": "object"
+          },
+          "findings": {
+            "maxItems": 0
+          },
+          "outcome": {
+            "const": "unknown"
+          },
+          "subject": {
+            "type": "object"
+          }
+        }
+      }
     },
-    "started_at": {
-      "type": "string",
-      "format": "date-time",
-      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$",
-      "maxLength": 27
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "failed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "coverage": {
+            "properties": {
+              "blank_lines": {
+                "type": "null"
+              },
+              "input_bytes": {
+                "type": "null"
+              },
+              "scanned_lines": {
+                "type": "null"
+              },
+              "total_lines": {
+                "type": "null"
+              }
+            }
+          },
+          "error": {
+            "properties": {
+              "code": {
+                "not": {
+                  "const": "NO_CONTENT"
+                }
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": "object"
+          },
+          "findings": {
+            "maxItems": 0
+          },
+          "outcome": {
+            "const": "unknown"
+          }
+        }
+      }
     },
-    "finished_at": {
-      "type": "string",
-      "format": "date-time",
-      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$",
-      "maxLength": 27
+    {
+      "if": {
+        "properties": {
+          "subject": {
+            "type": "null"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "const": "INVALID_METADATA"
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "const": "failed"
+          }
+        }
+      }
     },
-    "status": {
-      "enum": [
-        "complete",
-        "failed",
-        "no_content"
-      ]
+    {
+      "if": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "const": "INVALID_METADATA"
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": "object"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "const": "failed"
+          },
+          "subject": {
+            "type": "null"
+          }
+        }
+      }
     },
-    "outcome": {
-      "enum": [
-        "no_patterns_matched",
-        "review_needed",
-        "unknown"
-      ]
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "no_patterns_matched"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "findings": {
+            "maxItems": 0
+          },
+          "status": {
+            "const": "complete"
+          }
+        }
+      }
     },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "review_needed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "findings": {
+            "minItems": 1
+          },
+          "status": {
+            "const": "complete"
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
     "coverage": {
-      "type": "object",
       "additionalProperties": false,
-      "required": [
-        "mode",
-        "input_bytes",
-        "total_lines",
-        "scanned_lines",
-        "blank_lines"
-      ],
       "properties": {
-        "mode": {
-          "const": "all_nonblank_lines_including_comments"
+        "blank_lines": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "input_bytes": {
           "anyOf": [
             {
-              "type": "integer",
+              "maximum": 262144,
               "minimum": 0,
-              "maximum": 262144
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode": {
+          "const": "all_nonblank_lines_including_comments"
+        },
+        "scanned_lines": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
             },
             {
               "type": "null"
@@ -123,81 +282,100 @@
         "total_lines": {
           "anyOf": [
             {
-              "type": "integer",
+              "maximum": 1000,
               "minimum": 0,
-              "maximum": 1000
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "scanned_lines": {
-          "anyOf": [
-            {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 1000
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "blank_lines": {
-          "anyOf": [
-            {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 1000
+              "type": "integer"
             },
             {
               "type": "null"
             }
           ]
         }
-      }
+      },
+      "required": [
+        "mode",
+        "input_bytes",
+        "total_lines",
+        "scanned_lines",
+        "blank_lines"
+      ],
+      "type": "object"
+    },
+    "engine": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline_tree": {
+          "enum": [
+            "a0b591985209611ffc515a9ff676cea5eab83555",
+            "336faa083fccb78a098cf2cf146df3e4d50c1d82"
+          ]
+        },
+        "mode": {
+          "const": "static_line_scan"
+        },
+        "module": {
+          "const": "github.com/TakeInterestInc/guardclaw-core"
+        }
+      },
+      "required": [
+        "module",
+        "baseline_tree",
+        "mode"
+      ],
+      "type": "object"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                "INVALID_METADATA",
+                "INPUT_LIMIT",
+                "INVALID_ENCODING",
+                "NUL_BYTE",
+                "LINE_LIMIT",
+                "LINE_COUNT_LIMIT",
+                "FINDING_LIMIT",
+                "PATTERN_LIMIT",
+                "OUTPUT_LIMIT",
+                "ENGINE_UNAVAILABLE",
+                "ENGINE_RESULT_INVALID",
+                "TIMEOUT",
+                "CANCELLED",
+                "IO_ERROR",
+                "NO_CONTENT"
+              ]
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "findings": {
-      "type": "array",
-      "maxItems": 200,
       "items": {
-        "type": "object",
         "additionalProperties": false,
-        "required": [
-          "line",
-          "decision",
-          "severity",
-          "pattern_ids"
-        ],
         "properties": {
-          "line": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 1000
-          },
           "decision": {
             "enum": [
               "deny",
               "escalate"
             ]
           },
-          "severity": {
-            "enum": [
-              "critical",
-              "high",
-              "medium",
-              "low",
-              "info"
-            ]
+          "line": {
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
           },
           "pattern_ids": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 16,
-            "uniqueItems": true,
             "items": {
-              "type": "string",
               "enum": [
                 "GC-AC-0000",
                 "GC-AC-0001",
@@ -1227,6 +1405,7 @@
                 "pipe_netcat",
                 "pipe_openssl",
                 "pipe_shell",
+                "pipe_shell_wrapped",
                 "pipe_tee",
                 "pipe_xargs",
                 "pipe_xxd",
@@ -1902,41 +2081,86 @@
                 "zip_curl",
                 "zip_slip",
                 "zws_in_path"
-              ]
-            }
+              ],
+              "type": "string"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low",
+              "info"
+            ]
           }
-        }
-      }
+        },
+        "required": [
+          "line",
+          "decision",
+          "severity",
+          "pattern_ids"
+        ],
+        "type": "object"
+      },
+      "maxItems": 200,
+      "type": "array"
     },
-    "error": {
+    "finished_at": {
+      "format": "date-time",
+      "maxLength": 27,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$",
+      "type": "string"
+    },
+    "outcome": {
+      "enum": [
+        "no_patterns_matched",
+        "review_needed",
+        "unknown"
+      ]
+    },
+    "schema_version": {
+      "const": "guardclaw.scan-report.v1"
+    },
+    "started_at": {
+      "format": "date-time",
+      "maxLength": 27,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "failed",
+        "no_content"
+      ]
+    },
+    "subject": {
       "anyOf": [
         {
-          "type": "object",
           "additionalProperties": false,
-          "required": [
-            "code"
-          ],
           "properties": {
-            "code": {
-              "enum": [
-                "INVALID_METADATA",
-                "INPUT_LIMIT",
-                "INVALID_ENCODING",
-                "NUL_BYTE",
-                "LINE_LIMIT",
-                "LINE_COUNT_LIMIT",
-                "FINDING_LIMIT",
-                "PATTERN_LIMIT",
-                "OUTPUT_LIMIT",
-                "ENGINE_UNAVAILABLE",
-                "ENGINE_RESULT_INVALID",
-                "TIMEOUT",
-                "CANCELLED",
-                "IO_ERROR",
-                "NO_CONTENT"
-              ]
+            "revision": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "snapshot_id": {
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
             }
-          }
+          },
+          "required": [
+            "snapshot_id",
+            "revision"
+          ],
+          "type": "object"
         },
         {
           "type": "null"
@@ -1944,241 +2168,18 @@
       ]
     }
   },
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:takeinterest:guardclaw:scan-report:v1",
+  "required": [
+    "schema_version",
+    "engine",
+    "subject",
+    "started_at",
+    "finished_at",
+    "status",
+    "outcome",
+    "coverage",
+    "findings",
+    "error"
+  ],
   "title": "Untrusted advisory GuardClaw scan report v1",
-  "$comment": "Schema is not an authenticity check. Import requires duplicate-key, byte/depth, exact UTC parse/order, arithmetic, finding-line uniqueness and attachment-context checks in the companion contract. Offline validators must not fetch remote schema URLs.",
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "status": {
-            "const": "complete"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "subject": {
-            "type": "object"
-          },
-          "error": {
-            "type": "null"
-          },
-          "outcome": {
-            "enum": [
-              "no_patterns_matched",
-              "review_needed"
-            ]
-          },
-          "coverage": {
-            "properties": {
-              "input_bytes": {
-                "type": "integer"
-              },
-              "total_lines": {
-                "type": "integer"
-              },
-              "scanned_lines": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "blank_lines": {
-                "type": "integer"
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "status": {
-            "const": "no_content"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "subject": {
-            "type": "object"
-          },
-          "outcome": {
-            "const": "unknown"
-          },
-          "findings": {
-            "maxItems": 0
-          },
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "const": "NO_CONTENT"
-              }
-            },
-            "required": [
-              "code"
-            ]
-          },
-          "coverage": {
-            "properties": {
-              "input_bytes": {
-                "type": "integer"
-              },
-              "total_lines": {
-                "type": "integer"
-              },
-              "scanned_lines": {
-                "const": 0
-              },
-              "blank_lines": {
-                "type": "integer"
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "status": {
-            "const": "failed"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "outcome": {
-            "const": "unknown"
-          },
-          "findings": {
-            "maxItems": 0
-          },
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "not": {
-                  "const": "NO_CONTENT"
-                }
-              }
-            },
-            "required": [
-              "code"
-            ]
-          },
-          "coverage": {
-            "properties": {
-              "input_bytes": {
-                "type": "null"
-              },
-              "total_lines": {
-                "type": "null"
-              },
-              "scanned_lines": {
-                "type": "null"
-              },
-              "blank_lines": {
-                "type": "null"
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "subject": {
-            "type": "null"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "status": {
-            "const": "failed"
-          },
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "const": "INVALID_METADATA"
-              }
-            },
-            "required": [
-              "code"
-            ]
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "const": "INVALID_METADATA"
-              }
-            },
-            "required": [
-              "code"
-            ]
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "subject": {
-            "type": "null"
-          },
-          "status": {
-            "const": "failed"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "outcome": {
-            "const": "no_patterns_matched"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "status": {
-            "const": "complete"
-          },
-          "findings": {
-            "maxItems": 0
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "outcome": {
-            "const": "review_needed"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "status": {
-            "const": "complete"
-          },
-          "findings": {
-            "minItems": 1
-          }
-        }
-      }
-    }
-  ]
+  "type": "object"
 }

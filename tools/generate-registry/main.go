@@ -71,5 +71,21 @@ func main() {
 	if err = os.WriteFile("observatory/src/guardclaw-patterns.mjs", []byte(js), 0644); err != nil {
 		panic("cannot write browser registry")
 	}
+
+	var schema map[string]any
+	b, err = os.ReadFile("schemas/guardclaw-scan-report.v1.json")
+	if err != nil || json.Unmarshal(b, &schema) != nil {
+		panic("report schema unavailable")
+	}
+	props := schema["properties"].(map[string]any)
+	engine := props["engine"].(map[string]any)["properties"].(map[string]any)["baseline_tree"].(map[string]any)
+	delete(engine, "const")
+	engine["enum"] = []string{baseline, legacy.Baseline}
+	findings := props["findings"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+	findings["pattern_ids"].(map[string]any)["items"].(map[string]any)["enum"] = list
+	b, err = json.MarshalIndent(schema, "", "  ")
+	if err != nil || os.WriteFile("schemas/guardclaw-scan-report.v1.json", append(b, '\n'), 0644) != nil {
+		panic("cannot write report schema")
+	}
 	fmt.Printf("Generated %d current IDs; preserved %d legacy IDs.\n", len(list), len(legacy.IDs))
 }

@@ -320,11 +320,11 @@ func TestConsolidatedBaselineScopesNewID(t *testing.T) {
 	}
 	r.Engine.BaselineTree = BaselineTree
 	r.Findings[0].PatternIDs = []string{"pipe_shell_wrapped"}
-	if err := Validate(r); err != nil {
+	if err := validateReport(r); err != nil {
 		t.Fatal(err)
 	}
 	r.Engine.BaselineTree = LegacyBaselineTree
-	if err := Validate(r); err == nil {
+	if err := validateReport(r); err == nil {
 		t.Fatal("legacy validator accepted new ID")
 	}
 }
