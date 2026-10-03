@@ -12,4 +12,13 @@ Complete/no-match means no known static patterns matched selected lines. Complet
 
 The optional helper accepts stdin and generated metadata, with 256 KiB input, 1,000 lines, 16 KiB/line, 200 findings, 16 IDs/finding, 64 KiB output and 10-second watchdog. Exit 0=no-match, 1=findings, 2=failure/no-content. Missing/truncated output must be rejected. Its static scan path makes no network/feed/model/exec calls, but OS network containment was not independently established; hard memory containment is not claimed. Cross-platform runs are untested.
 
-The demo needs only Node/browser. Optional source build needs Go 1.26.6+ and may fetch standard dependencies if uncached. Full Apache Core and Go dependency notices are retained. No proprietary runtime, binary, private test receipts/history or data are shipped. The Apache browser port/registry are separately licensed from the original dashboard; no dashboard release license is chosen yet.
+The demo needs only Node/browser. Optional source build needs Go 1.26.6+ and may fetch standard dependencies if uncached. Full Apache Core and Go dependency notices are retained. No proprietary runtime, binary, private test receipts/history or data are shipped. The Apache browser port/registry are separately licensed from the original dashboard; the dashboard and Core retain Apache-2.0, with separate font OFL notices.
+
+## Consolidated baselines
+
+New reports use public Core tree `a0b591985209611ffc515a9ff676cea5eab83555`
+and its generated 1,704 IDs. Existing `336faa083fccb78a098cf2cf146df3e4d50c1d82`
+reports remain importable against their original 1,703-ID registry. No baseline
+authenticates a scanner or proves an input safe. Run `go run ./tools/generate-registry`
+from the root after a reviewed scanner change, then test actual-engine/registry
+parity and both browser contract sets. Removing legacy IDs needs a reviewed migration.

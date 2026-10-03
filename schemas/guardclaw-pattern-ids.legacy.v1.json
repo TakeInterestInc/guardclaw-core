@@ -1,5 +1,5 @@
 {
-  "baseline_tree": "a0b591985209611ffc515a9ff676cea5eab83555",
+  "baseline_tree": "336faa083fccb78a098cf2cf146df3e4d50c1d82",
   "pattern_ids": [
     "GC-AC-0000",
     "GC-AC-0001",
@@ -1029,7 +1029,6 @@
     "pipe_netcat",
     "pipe_openssl",
     "pipe_shell",
-    "pipe_shell_wrapped",
     "pipe_tee",
     "pipe_xargs",
     "pipe_xxd",

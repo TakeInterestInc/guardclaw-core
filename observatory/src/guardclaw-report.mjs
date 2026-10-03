@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Port of internal/report/validate.go. See ../../LICENSE and NOTICE.
-import {PATTERN_IDS,BASELINE_TREE} from './guardclaw-patterns.mjs';
+import {PATTERN_IDS,BASELINE_TREE,LEGACY_PATTERN_IDS,LEGACY_BASELINE_TREE} from './guardclaw-patterns.mjs';
 export const REPORT_LIMIT=65536;
-const ids=new Set(PATTERN_IDS), uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const currentIDs=new Set(PATTERN_IDS),legacyIDs=new Set(LEGACY_PATTERN_IDS), uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const errors=new Set(['INVALID_METADATA','INPUT_LIMIT','INVALID_ENCODING','NUL_BYTE','LINE_LIMIT','LINE_COUNT_LIMIT','FINDING_LIMIT','PATTERN_LIMIT','OUTPUT_LIMIT','ENGINE_UNAVAILABLE','ENGINE_RESULT_INVALID','TIMEOUT','CANCELLED','IO_ERROR','NO_CONTENT']);
 const invalid=()=>{throw Error('REPORT_INVALID');};
 function strictJSON(text){
@@ -22,7 +22,8 @@ export function validateReport(r){
  if(r.subject!==null){object(r.subject,['snapshot_id','revision']);if(!subject(r.subject))invalid();}
  if(r.error!==null){object(r.error,['code']);if(!errors.has(r.error.code))invalid();}
  if(r.schema_version!=='guardclaw.scan-report.v1')throw Error('REPORT_UNSUPPORTED');
- if(r.engine.module!=='github.com/TakeInterestInc/guardclaw-core'||r.engine.baseline_tree!==BASELINE_TREE||r.engine.mode!=='static_line_scan'||r.coverage.mode!=='all_nonblank_lines_including_comments'||!Array.isArray(r.findings)||r.findings.length>200)invalid();
+ if(r.engine.module!=='github.com/TakeInterestInc/guardclaw-core'||![BASELINE_TREE,LEGACY_BASELINE_TREE].includes(r.engine.baseline_tree)||r.engine.mode!=='static_line_scan'||r.coverage.mode!=='all_nonblank_lines_including_comments'||!Array.isArray(r.findings)||r.findings.length>200)invalid();
+ const ids=r.engine.baseline_tree===BASELINE_TREE?currentIDs:legacyIDs;
  if(time(r.finished_at)<time(r.started_at))invalid();
  const counts=['input_bytes','total_lines','scanned_lines','blank_lines'].map(k=>r.coverage[k]);
  if(r.status==='failed'){if(r.outcome!=='unknown'||r.findings.length||!r.error||r.error.code==='NO_CONTENT'||(r.subject===null)!==(r.error.code==='INVALID_METADATA')||counts.some(c=>c!==null))invalid();return r;}

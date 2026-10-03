@@ -171,7 +171,7 @@ func validateSubject(s *Subject) bool {
 	return s != nil && len(s.SnapshotID) == 36 && uuidPattern.MatchString(s.SnapshotID) && s.Revision <= MaxRevision
 }
 func validateReport(r Report) error {
-	if r.SchemaVersion != Version || r.Engine != (EngineIdentity{Module, BaselineTree, EngineMode}) || r.Coverage.Mode != CoverageMode || r.Findings == nil {
+	if r.SchemaVersion != Version || (r.Engine.Module != Module || r.Engine.Mode != EngineMode || (r.Engine.BaselineTree != BaselineTree && r.Engine.BaselineTree != LegacyBaselineTree)) || r.Coverage.Mode != CoverageMode || r.Findings == nil {
 		return invalid()
 	}
 	start, err := parseTime(r.StartedAt)
@@ -230,7 +230,7 @@ func validateReport(r Report) error {
 	if (len(r.Findings) == 0 && r.Outcome != "no_patterns_matched") || (len(r.Findings) > 0 && r.Outcome != "review_needed") {
 		return invalid()
 	}
-	ids, err := registrySet()
+	ids, err := registrySetFor(r.Engine.BaselineTree)
 	if err != nil {
 		return invalid()
 	}

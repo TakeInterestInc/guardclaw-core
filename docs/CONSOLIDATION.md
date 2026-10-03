@@ -44,3 +44,10 @@ are labeled archival; active setup points only to this product.
 Publication is a separate reviewed step: inspect the exact candidate/tree and
 diff, approve a branch push and draft PR to the existing canonical repository.
 No remote rename, archive, delete, history rewrite or merge is in this scope.
+
+Report baseline compatibility: the public Core engine adds one exported ID over
+Dot's legacy registry. New reports use the verified public Core tree
+`a0b591985209611ffc515a9ff676cea5eab83555` (1,704 IDs); legacy `336faa...`
+reports remain accepted with exactly their former ID set (1,703). This is an
+explicit engine-identity update, with unchanged report v1 shape, current/legacy
+fixtures and generated-registry/actual-engine tests. No scanner code is modified.

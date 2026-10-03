@@ -30,7 +30,10 @@
           "const": "github.com/TakeInterestInc/guardclaw-core"
         },
         "baseline_tree": {
-          "const": "336faa083fccb78a098cf2cf146df3e4d50c1d82"
+          "enum": [
+            "a0b591985209611ffc515a9ff676cea5eab83555",
+            "336faa083fccb78a098cf2cf146df3e4d50c1d82"
+          ]
         },
         "mode": {
           "const": "static_line_scan"

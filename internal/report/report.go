@@ -18,18 +18,19 @@ import (
 )
 
 const (
-	Version       = "guardclaw.scan-report.v1"
-	BaselineTree  = "336faa083fccb78a098cf2cf146df3e4d50c1d82"
-	Module        = "github.com/TakeInterestInc/guardclaw-core"
-	EngineMode    = "static_line_scan"
-	CoverageMode  = "all_nonblank_lines_including_comments"
-	MaxInput      = 262144
-	MaxOutput     = 65536
-	MaxLines      = 1000
-	MaxLine       = 16384
-	MaxFindings   = 200
-	MaxPatternIDs = 16
-	MaxRevision   = uint64(9007199254740991)
+	Version            = "guardclaw.scan-report.v1"
+	BaselineTree       = "a0b591985209611ffc515a9ff676cea5eab83555"
+	LegacyBaselineTree = "336faa083fccb78a098cf2cf146df3e4d50c1d82"
+	Module             = "github.com/TakeInterestInc/guardclaw-core"
+	EngineMode         = "static_line_scan"
+	CoverageMode       = "all_nonblank_lines_including_comments"
+	MaxInput           = 262144
+	MaxOutput          = 65536
+	MaxLines           = 1000
+	MaxLine            = 16384
+	MaxFindings        = 200
+	MaxPatternIDs      = 16
+	MaxRevision        = uint64(9007199254740991)
 )
 
 type Subject struct {
@@ -138,12 +139,22 @@ func ParseSubject(args []string) (*Subject, error) {
 	return &Subject{SnapshotID: id, Revision: r}, nil
 }
 
-func registrySet() (map[string]bool, error) {
+func registrySet() (map[string]bool, error) { return registrySetFor(BaselineTree) }
+
+func registrySetFor(baseline string) (map[string]bool, error) {
 	var data struct {
 		BaselineTree string   `json:"baseline_tree"`
 		IDs          []string `json:"pattern_ids"`
 	}
-	if json.Unmarshal(schemas.PatternRegistry(), &data) != nil || data.BaselineTree != BaselineTree || len(data.IDs) != 1703 {
+	raw := schemas.PatternRegistry()
+	switch baseline {
+	case BaselineTree:
+	case LegacyBaselineTree:
+		raw = schemas.LegacyPatternRegistry()
+	default:
+		return nil, &ValidationError{Code: "ENGINE_UNAVAILABLE"}
+	}
+	if json.Unmarshal(raw, &data) != nil || data.BaselineTree != baseline || len(data.IDs) == 0 {
 		return nil, &ValidationError{Code: "ENGINE_UNAVAILABLE"}
 	}
 	ids := make(map[string]bool, len(data.IDs))

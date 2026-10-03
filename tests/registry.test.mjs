@@ -1,2 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';import {BASELINE_TREE,PATTERN_IDS} from '../observatory/src/guardclaw-patterns.mjs';
+import test from 'node:test';import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';import {BASELINE_TREE,PATTERN_IDS,LEGACY_BASELINE_TREE,LEGACY_PATTERN_IDS} from '../observatory/src/guardclaw-patterns.mjs';
 test('Browser generated registry matches the single root contract',async()=>{const r=JSON.parse(await readFile(new URL('../schemas/guardclaw-pattern-ids.v1.json',import.meta.url)));assert.equal(BASELINE_TREE,r.baseline_tree);assert.deepEqual(PATTERN_IDS,r.pattern_ids);});
+
+test('Legacy report IDs remain exactly compatible with original contract',async()=>{const r=JSON.parse(await readFile(new URL('../schemas/guardclaw-pattern-ids.legacy.v1.json',import.meta.url)));assert.equal(LEGACY_BASELINE_TREE,r.baseline_tree);assert.deepEqual(LEGACY_PATTERN_IDS,r.pattern_ids);});
