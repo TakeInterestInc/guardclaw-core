@@ -1,6 +1,6 @@
 # Architecture and data boundaries
 
-A static browser app, Node built-in read-only loopback server, with no runtime package installation. Native ES modules and CSS are sufficient for this small surface. There is no database, model, SDK, account, hidden integration, dependency installation or network service.
+A static browser app, Node built-in read-only loopback server, with no runtime package installation. Native ES modules and CSS are sufficient for this small surface. There is no database, model, SDK, account, hidden integration or runtime dependency installation. An explicitly enabled local feed adds same-origin loopback reads.
 
 ```text
 Original synthetic fixture ───────────────┐
@@ -10,11 +10,15 @@ Explicit safe JSON file → bounded parser → validated DTO → read-only views
                                               └→ derived counts/freshness
 ```
 
-`src/demo.mjs`: original authored fixture plus frozen evaluation time. `src/model.mjs`: pure schema checks, state consistency, freshness/filter/count helpers. `src/app.mjs`: small DOM primitives and view compositions; event handlers change local view/selection only. `styles.css`: shared tokens, continuous atmospheric field, editorial decision/proof grid and responsive boundaries. `assets/atmosphere-v1.png`: an original generated local texture. Decorative CSS motion has a pause control and reduced-motion fallback; it represents no live task state. `server.mjs`: exact route map, loopback Host check, GET/HEAD only, no-store and restrictive CSP including `connect-src 'none'`. Static example files are safe; docs/tests/private files are not served.
+`src/demo.mjs`: original authored fixture plus frozen evaluation time. `src/model.mjs`: pure schema checks, state consistency, freshness/filter/count helpers. `src/app.mjs`: small DOM primitives and view compositions; event handlers change local view/selection only. `styles.css`: shared tokens, continuous atmospheric field, editorial decision/proof grid and responsive boundaries. `assets/atmosphere-v1.png`: an original generated local texture. Decorative CSS motion has a pause control and reduced-motion fallback; it represents no live task state. `server.mjs`: exact route map, loopback Host check, GET/HEAD only, no-store and restrictive CSP: `connect-src 'none'` by default, `'self'` only with `--live`. Static example files are safe; docs/tests/private files are not served.
 
-No imports go to the server. No localStorage, sessionStorage, IndexedDB, cookies, analytics, externally fetched fonts/assets, fetch, sockets or operational mutations are used by the app. The optional test runner performs local HTTP reads/negative checks; it is outside app runtime.
+Manual browser imports never go to the server. No localStorage, sessionStorage, IndexedDB, cookies, analytics, externally fetched fonts/assets, sockets or operational mutations are used by the app. Fetch is used only by the explicitly connected local feed, to one same-origin fixed route. The optional test runner performs local HTTP reads/negative checks; it is outside app runtime.
 
-## Future adapter seam
+## Optional local feed
+
+`tools/local-feed.mjs` validates and atomically publishes snapshot v1 on stdin to a fixed owner-only spool. With `--live`, the loopback server serves only bounded, revalidated snapshots through a per-launch-capability GET/HEAD endpoint. The fresh random capability is atomically published to an owner-only access file after successful listen, selected explicitly into browser memory, and checked before every read/cache response. Reset/reload clear browser capability; restart invalidates old capabilities. It never appears in URLs/logs or static routes. It denies foreign Host/Origin and cross-site Fetch Metadata; no CORS, arbitrary paths/URLs or network writes exist. The browser polls serially only after an explicit connection and stops on reset/reload/manual snapshot selection. It preserves the last good snapshot on failure, updates freshness, distinguishes capture from receipt time, and advances the advisory association revision only on changed snapshots. No hashing, authenticity, execution or enforcement is established. See [LOCAL_AGENT_SETUP.md](LOCAL_AGENT_SETUP.md).
+
+## Future account adapter seam
 
 A separately reviewed adapter may transform a supported, authorized API's public-safe records into the version 1 DTO. It must live outside the reusable UI package, hold credentials outside snapshot data, enforce source/task scopes and owner authorization, retain observation/capture times, and pass the same validation. A producer claiming `authorized-api` does not establish authorization. No private state scraping, raw-log translation or automatic credential discovery is acceptable.
 

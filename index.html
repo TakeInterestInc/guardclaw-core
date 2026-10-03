@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><meta name="referrer" content="no-referrer"><link rel="icon" href="/favicon.svg"><title>Dot Observatory · Local snapshot</title><link rel="preload" href="/fonts/bricolage-grotesque-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="/fonts/geist-mono-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/styles.css"><script type="module" src="/src/app.mjs"></script>
 </head>
-<body>
+<body data-local-feed="disabled">
 <a class="skip-link" href="#main">Skip to content</a>
 <div class="atmosphere" aria-hidden="true"></div>
 <header class="masthead">
@@ -12,7 +12,7 @@
   <div class="masthead-actions"><button id="demo-reset" class="secondary" type="button">Reset demo</button><button id="background-motion" class="motion-toggle" type="button" aria-label="Pause decorative background" title="Pause decorative background"><span aria-hidden="true">Ⅱ</span></button></div>
 </header>
 <main id="main" tabindex="-1">
-  <div class="snapshot-meta"><span id="snapshot-label"></span><p id="snapshot-note"></p></div>
+  <div class="snapshot-meta"><span id="snapshot-label"></span><p id="snapshot-note"></p><p id="local-feed-status" role="status" hidden></p></div>
   <div id="content"></div>
   <section class="snapshot-band" aria-label="Snapshot overview">
     <div class="snapshot-totals"><h2 class="section-label">The snapshot</h2><div id="metrics" class="metrics" role="group" aria-label="Snapshot totals"></div></div>

@@ -32,7 +32,7 @@ Pause stops the dot's current main task. It does not stop all delegated tasks or
 
 ## What this prototype adds—and what to compare
 
-The demo is an authored synthetic snapshot. Imported JSON is a point-in-time producer report, evaluated at its opening/recheck time. Neither is live. No supported dots task API has been wired, and no private agent state is read. The prototype's review idea is recommendations + concise rationale + trade-offs + disagreement alongside provenance and dated evidence; it does not expose internal reasoning, prompts or logs.
+The demo is an authored synthetic snapshot. Imported JSON is a point-in-time producer report, evaluated at its opening/recheck time. The default mode is offline. A separate opt-in generic local producer feed is documented in LOCAL_AGENT_SETUP.md; it reads only deliberately published public-safe summaries. No supported dots task API has been wired, and no private agent state is read. The prototype's review idea is recommendations + concise rationale + trade-offs + disagreement alongside provenance and dated evidence; it does not expose internal reasoning, prompts or logs.
 
 Try the native UI and this guide first. Keep the dashboard only if its compact comparison saves a real decision or makes uncertainty easier to see. Record that difference in FEEDBACK.md. Existing open-source agent dashboards and inboxes are precedents; there is no first/only claim here.
 

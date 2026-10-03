@@ -1,6 +1,6 @@
 # Safe snapshot contract — version 1
 
-Select a `.json` file in Data & safety. Import is explicit and memory-only. No HTTP ingestion endpoint or live adapter exists. Unknown fields are rejected, including logs, prompts, memory, credentials, reasoning traces and extensible raw metadata. All strings render as text; source URLs remain inert.
+Select a `.json` file in Data & safety. Import is explicit and memory-only. There is no HTTP ingestion endpoint. The optional local feed transports this same DTO from one deliberately prepared owner-only spool; see LOCAL_AGENT_SETUP.md. Unknown fields are rejected, including logs, prompts, memory, credentials, reasoning traces and extensible raw metadata. All strings render as text; source URLs remain inert.
 
 The executable validation contract is `src/model.mjs`; `examples/snapshot.json` is a complete synthetic fixture and `examples/empty.json` is a minimal empty fixture. All fields below are required except `source.url`.
 
@@ -22,7 +22,7 @@ The executable validation contract is `src/model.mjs`; `examples/snapshot.json` 
 - Task progress is `null` for unknown, or integer completed/total where 1 ≤ total ≤ 1000 and 0 ≤ completed ≤ total. It is checklist progress, not a probability or estimated completion percentage.
 - Decision status: `awaiting-owner | resolved`. Resolved needs outcome text; awaiting-owner must have empty outcome. Importing an outcome never authorizes any action.
 - Evidence result: `passed | failed | pending`. Passed/failed need an observation time. Pending may have a time indicating its last observation, or null.
-- All timestamps use valid UTC `YYYY-MM-DDTHH:mm:ssZ`. `observedAt` may be null; capture may not be more than five minutes in the future. Observations may not follow capture. Freshness is measured against the visibly frozen demo time, or imported evaluation time. No polling occurs.
+- All timestamps use valid UTC `YYYY-MM-DDTHH:mm:ssZ`. `observedAt` may be null; capture may not be more than five minutes in the future. Observations may not follow capture. Freshness is measured against the visibly frozen demo time, or imported evaluation time. Manual imports do not poll; an explicitly connected local feed reevaluates freshness.
 - Source kind: `synthetic | manual | authorized-api`. These are producer declarations, not proof of a connection or authorization. Record IDs are safe generic identifiers, not credentials or private provider handles.
 - Optional URL: public-looking HTTPS only; max 240 characters; no credentials, query, fragment, explicit port, IP, encoded path or local/internal/test hostname. The app does not fetch, verify or make it clickable. Public-looking paths can still be sensitive; inspect before import.
 - Known credential patterns, common hard personal identifiers and unsafe control/bidi characters are rejected. Arbitrary secrets/PII cannot be reliably detected. This is not a secret scanner or redaction service.

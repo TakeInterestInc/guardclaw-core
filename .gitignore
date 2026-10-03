@@ -7,6 +7,7 @@ private/
 imports/
 adapters-private/
 evidence/
+.observatory-local/
 .DS_Store
 
 # Optional operator-built helper and reports

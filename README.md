@@ -1,6 +1,6 @@
 # Dot Observatory 0.2.1
 
-A compact, read-only way to compare owner decisions, recommendations, trade-offs, task blockers and reported evidence across parallel work. Starts with entirely synthetic authored data, or a JSON snapshot you import by hand. It is a read-only dashboard: no dots API is wired, it reads no live dots data, and nothing is hosted. Licensed under [Apache-2.0](LICENSE).
+A compact, read-only way to compare owner decisions, recommendations, trade-offs, task blockers and reported evidence across parallel work. Starts with entirely synthetic authored data, or a JSON snapshot you import by hand. An opt-in local feed can receive deliberately prepared public-safe summaries from a capable local agent producer. This is a first draft: no official dots/Cowork or account API is wired, no existing agent state is discovered, and nothing is hosted. Licensed under [Apache-2.0](LICENSE).
 
 Native dots Activity already shows delegated task progress, files, results and requests for input. This project tests whether a compact decision/evidence view and explicit freshness labels help beyond the native UI and a short guide. It is not a replacement task runtime or security gateway.
 
@@ -18,6 +18,12 @@ Open **http://127.0.0.1:4317** on the same computer. Stop with **Ctrl+C**. If th
 Phone-sized layouts are implemented and tested in Chromium emulation. The loopback URL is not accessible from a separate iPhone; screenshots saved to private Library are previews, not a hosted app. Actual iPhone/Safari validation remains pending.
 
 Measured viewport previews: [desktop decision](docs/screenshots/desktop-decisions.png), [390px decision](docs/screenshots/iphone-390-decisions.png), [390px stale inspector](docs/screenshots/iphone-work-stale.png). These show the synthetic frozen snapshot, not live work.
+
+## Try the local connection
+
+Run `npm run start:live`, open the printed loopback URL, and in **Data & safety** choose this launch’s `.observatory-local/access.json`, then select **Connect local feed**. In a second terminal in this project, run `npm run demo:agent` to see four synthetic updates. This is a **synthetic adapter demo**, not an official host integration. Checks and outcomes remain unverified producer claims.
+
+[Local agent setup](docs/LOCAL_AGENT_SETUP.md) gives agent-readable onboarding, the fixed snapshot v1 contract and the security boundary. A capable local producer can explicitly publish prepared summaries; no raw agent logs, credentials, account connection, persistent hook or command execution is involved. The default `npm start` remains offline.
 
 ## Two-minute trial
 
@@ -66,6 +72,6 @@ Run `npm run test:scanner-ui` with the same optional Playwright/axe environment 
 - [Prospective release checklist](docs/RELEASE_READINESS.md), [dependency/license inventory](docs/THIRD_PARTY.md), [brand provenance](docs/BRAND_PROVENANCE.md).
 - No private dot memory, orchestration state, prompts, raw session logs or credentials are included. Local corpus guidance informed the process only; no private corpus excerpts or proprietary third-party implementation is bundled. Optional Apache Core source and its derived report validator/registry are included with notices. The explicitly requested TakeInterest visual identity uses licensed font bytes and verified color/type tokens in an original dashboard composition.
 
-The server reads static allowlisted public-safe files. Imports never reach the server. There are no operational approval, execution, messaging, deployment or live-refresh controls. Reported verified stage requires dated passing evidence, but this app does not authenticate its source or rerun checks.
+The default server reads static allowlisted public-safe files. Manual browser imports never reach the server. With explicit live mode and connection, a fixed local spool supplies revalidated snapshots. There are no operational approval, execution, messaging or deployment controls. Reported verified stage requires dated passing evidence, but this app does not authenticate its source or rerun checks.
 
 Repository contribution/report templates, trust boundaries and proposed maintainer settings are in [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and [docs/MAINTAINER_SETUP.md](docs/MAINTAINER_SETUP.md). Imported snapshots are producer claims: a source labeled `authorized-api` is a label the file author typed, not a connection this app makes.
