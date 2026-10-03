@@ -1,0 +1,20 @@
+{
+  "name": "guardclaw-observatory",
+  "version": "0.2.1",
+  "private": true,
+  "type": "module",
+  "description": "Local read-only snapshot dashboard with synthetic data",
+  "scripts": {
+    "start": "node server.mjs",
+    "start:live": "node server.mjs --live",
+    "demo:agent": "node tools/synthetic-agent.mjs",
+    "test": "node --test tests/model.test.mjs tests/guardclaw-report.test.mjs tests/local-feed.test.mjs",
+    "test:ui": "node tests/browser.mjs",
+    "test:live-ui": "node tests/local-feed-browser.mjs",
+    "test:scanner-ui": "node tests/guardclaw-browser.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "Apache-2.0"
+}

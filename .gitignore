@@ -24,3 +24,7 @@ _gen/
 
 # Local personal policies, previews and receipt journals
 /.guardclaw/
+
+node_modules/
+/observatory/evidence/
+/observatory/.observatory-local/

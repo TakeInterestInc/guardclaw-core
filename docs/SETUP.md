@@ -1,4 +1,14 @@
-# Agent-assisted setup: first draft
+# GuardClaw setup: first draft
+
+
+From the repository root, run `npm run setup` to build the single Go source and
+run synthetic smoke checks, then `npm start` for the offline workspace. This
+requires installed Node.js 20+ and Go 1.26.6+. No npm runtime dependencies are
+installed. The following host preview is a later explicit owner-guided step.
+Data & safety prepares manual scanner commands and opens metadata receipts;
+progress snapshots remain separate producer claims. Live mode is optional:
+`npm run start:live`, select `observatory/.observatory-local/access.json`, then
+connect explicitly. No host state is discovered. Do not use a real spool in tests.
 
 Give your agent this request:
 
@@ -128,3 +138,5 @@ Keep receipts/checkpoints for your records or remove them yourself after review.
 Remove the checkout's binary/policy only after the handlers have been removed.
 No credentials, services, daemons, signing keys, network permissions or account
 connections were created by this adapter.
+
+After stopping the dashboard and removing any reviewed host handlers, `npm run clean` removes only built binaries. Review policies, receipt/checkpoint files and `observatory/.observatory-local/` before deleting or retaining them yourself. No background service was installed.

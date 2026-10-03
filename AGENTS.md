@@ -1,4 +1,4 @@
-# GuardClaw Core: agent onboarding
+# GuardClaw: agent onboarding
 
 This is public, standalone first-draft code. Read README.md and
 [docs/CAPABILITIES.md](docs/CAPABILITIES.md) before proposing setup; then follow
@@ -24,3 +24,10 @@ This is public, standalone first-draft code. Read README.md and
 Validation for Go changes: gofmt, go vet ./..., go test -race ./.... The existing
 mod test kit depends on host version; plugin validation alone is not execution
 coverage. Never label synthetic tests as live-host integration evidence.
+
+One product: use root README and `npm run setup` / `npm start`. `observatory/`
+is the progress/check/receipt component; do not install a second scanner.
+Keep snapshot claims, advisory scan results and receipt consistency distinct.
+Do not infer authorization from a snapshot, receipt, recipe or this file.
+Future efficiency recipes need demonstrated host capabilities and measurements;
+no new orchestrator or promised concurrency/savings belongs in this pass.

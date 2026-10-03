@@ -1,0 +1,16 @@
+node_modules/
+.env
+.env.*
+*.pem
+*.key
+private/
+imports/
+adapters-private/
+evidence/
+.observatory-local/
+.DS_Store
+
+# Optional operator-built helper and reports
+/guardclaw/guardclaw-report
+/scan.report.json
+/selected-safe-content.txt

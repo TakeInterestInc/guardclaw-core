@@ -111,3 +111,19 @@ detected. A checkpoint in the same writable directory can be rewritten too and
 is not an independent root of trust. Empty unanchored verification means only
 zero observed records, not complete coverage. Consumers must label this as
 `internal consistency checked; externally anchored history unavailable`.
+
+## GuardClaw workspace
+
+Data & safety can manually open a deliberately selected metadata journal and an
+optional independently retained checkpoint. The browser port runs the canonical
+Go vectors, rejects noncanonical/unknown metadata, and checks the SHA256 chain.
+It accepts at most 1 MiB / 2,000 records (Go CLI: 64 MiB), shows the last 50 and
+keeps all data only in memory. Reset/reload or Remove receipt data discards it.
+Imports never reach the server. No filesystem auto-discovery or live journal
+endpoint exists. Select only tool identifiers you are authorized to display.
+
+An ask receipt proves only the recorded request, not that the owner approved.
+Completion is a host-reported observation. Hash consistency is neither a signature
+nor full coverage; keep a trusted checkpoint separately. A checkpoint selected
+alongside an untrusted journal does not authenticate either file. Snapshot checks
+and action authority are unchanged by importing receipts.
