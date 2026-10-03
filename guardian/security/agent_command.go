@@ -130,7 +130,7 @@ func (w *agentWalker) strictLine(s string) *CommandInjectionResult {
 				}
 				isParsed = true
 			}
-			if w.conditionHolds(pat.Name, parsed) {
+			if w.conditionHolds(pat.Name, s, parsed) {
 				continue
 			}
 		}
@@ -149,7 +149,7 @@ func (w *agentWalker) strictLine(s string) *CommandInjectionResult {
 // conditionHolds is the precise check behind each conditional rule. It
 // fails closed: a line whose xargs, tee or rm cannot be found (the regex
 // matched something the parser does not see as that command) keeps the deny.
-func (w *agentWalker) conditionHolds(rule string, cmds []shCmd) bool {
+func (w *agentWalker) conditionHolds(rule, line string, cmds []shCmd) bool {
 	switch rule {
 	case "stderr_redirect":
 		return true
@@ -158,7 +158,8 @@ func (w *agentWalker) conditionHolds(rule string, cmds []shCmd) bool {
 	case "pipe_tee":
 		return everyCommand(cmds, "tee", teeIsPlain)
 	case "rm_rf_dot":
-		return everyCommand(cmds, "rm", func(args []shWord) bool { return rmTargetsHarmless(args) })
+		return everyCommand(cmds, "rm", func(args []shWord) bool { return rmTargetsHarmless(args) }) &&
+			lexicalRmTargetsPlain(line)
 	}
 	return false
 }
@@ -316,15 +317,70 @@ func teeIsPlain(args []shWord) bool {
 	return true
 }
 
+// plainRelPath is a plain in-tree relative path: an optional leading `./`,
+// then segments of [A-Za-z0-9._-] separated by `/`, an optional trailing `/`.
+var plainRelPath = regexp.MustCompile(`^(?:\./)?[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*/?$`)
+
 // rmTargetsHarmless: a non-recursive rm, or a recursive one whose every
-// target is literal and not dangerous.
+// target is a plain in-tree relative path with no `.` or `..` segment (so no
+// glob, no `~`, no `$`, no leading `/`). Anything else keeps strict's deny.
 func rmTargetsHarmless(args []shWord) bool {
 	recursive, targets := rmArgs(args)
 	if !recursive {
 		return true
 	}
+	if len(targets) == 0 {
+		return false
+	}
 	for _, t := range targets {
-		if !literalPath(t) || agentDangerousTarget(t) {
+		if !isPlainRelPath(t) {
+			return false
+		}
+	}
+	return true
+}
+
+// lexicalRmTargetsPlain reads the raw line as words, with quotes, parens and
+// separators as breaks, and requires every word after an `rm` to be a flag
+// or a plain relative path. It does not understand quoting on purpose: an rm
+// the parser would read as inert (`eval bash -c 'rm -rf .'`) still has to
+// look plain, so the exemption fails closed.
+func lexicalRmTargetsPlain(line string) bool {
+	words := strings.Fields(strings.Map(func(r rune) rune {
+		if strings.ContainsRune("\"'`()", r) {
+			return ' '
+		}
+		return r
+	}, line))
+	for i := 0; i < len(words); i++ {
+		if words[i] != "rm" {
+			continue
+		}
+		for _, f := range words[i+1:] {
+			if strings.ContainsAny(f, ";|&") {
+				break
+			}
+			if strings.HasPrefix(f, "-") {
+				continue
+			}
+			if !isPlainRelPath(f) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isPlainRelPath(t string) bool {
+	if !plainRelPath.MatchString(t) {
+		return false
+	}
+	rest := strings.TrimSuffix(strings.TrimPrefix(t, "./"), "/")
+	if rest == "" {
+		return false
+	}
+	for _, seg := range strings.Split(rest, "/") {
+		if seg == "" || seg == "." || seg == ".." {
 			return false
 		}
 	}
