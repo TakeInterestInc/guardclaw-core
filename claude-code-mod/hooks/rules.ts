@@ -329,18 +329,136 @@ function leadWord(command: string): string {
   return (out[0] ?? '').replace(/^.*\//, '')
 }
 
+export const DEGRADED_REASON = 'GuardClaw scanner not installed, only simple known-safe commands run. Install: go install github.com/TakeInterestInc/guardclaw-core/cmd/guardclaw-scan@latest'
+
+function degradedDeny(rule: string, detail: string): Verdict {
+  return { rule, reason: `${DEGRADED_REASON} (${detail})` }
+}
+
+/**
+ * Degraded mode, when the Go scanner is missing, is an ALLOWLIST. Three rounds
+ * of review showed a JavaScript denylist cannot match the Go parser (here
+ * strings, git -c core.pager, vim -c :!, tar --checkpoint-action all slipped
+ * through), so a shell command runs only when it is one plain segment whose
+ * first word and arguments are on the known-safe list below. The denylist
+ * gates above stay as an inner backstop, and checkCommand (rm plain-path rule,
+ * protected writes, scanner tamper) still runs on what the allowlist admits.
+ */
 export function degradedVerdict(command: unknown, guardRoot?: string, extra: readonly string[] = [], home?: string, scannerPaths: readonly string[] = []): Verdict | undefined {
   if (typeof command !== 'string') throw new TypeError(`shell command is ${typeof command}, not a string`)
   const c = normalize(command)
+  // Inner backstop: the denylist gates.
   for (const rule of DEGRADED_TOKENS) {
-    if (rule.re.test(command) || rule.re.test(c)) return { rule: rule.name, reason: `${rule.reason}, and the GuardClaw scanner is not installed, so it cannot be checked` }
+    if (rule.re.test(command) || rule.re.test(c)) return degradedDeny(rule.name, rule.reason)
   }
   if (unreadableName(firstWord(command)) || unreadableName(firstWord(c))) {
-    return { rule: 'degraded_unreadable_name', reason: 'runs a command whose name the shell expands first (a variable, a glob or a brace list), and the GuardClaw scanner is not installed, so it cannot be checked' }
+    return degradedDeny('degraded_unreadable_name', 'the command name is expanded by the shell first')
   }
-  if (DEGRADED_LEAD.test(leadWord(c))) return { rule: 'degraded_wrapper', reason: `runs another command through ${leadWord(c)}, and the GuardClaw scanner is not installed, so it cannot be checked` }
-  if (DEGRADED_RISKY_LEAD.test(leadWord(c))) return { rule: 'degraded_risky_command', reason: `runs ${leadWord(c)}, which the GuardClaw engine judges by its arguments, and the scanner is not installed` }
+  if (c.trim() !== 'env' && DEGRADED_LEAD.test(leadWord(c))) return degradedDeny('degraded_wrapper', `runs another command through ${leadWord(c)}`)
+  if (DEGRADED_RISKY_LEAD.test(leadWord(c))) return degradedDeny('degraded_risky_command', `${leadWord(c)} is judged by its arguments`)
+  // The allowlist.
+  const refused = degradedAllowlistRefusal(command)
+  if (refused) return degradedDeny('degraded_not_allowlisted', refused)
   return checkCommand(command, guardRoot, extra, home, scannerPaths)
+}
+
+/** Any character a shell treats as more than a word: separators, redirects, expansions, grouping, escapes. */
+const DEGRADED_METACHAR = /[;|&<>$`(){}\\\n\r]/
+
+/** Splits a metacharacter-free command into words, honoring '..' and "..". Undefined when a quote is left open. */
+export function simpleWords(command: string): string[] | undefined {
+  const out: string[] = []
+  let cur = ''
+  let inWord = false
+  let quote: string | undefined
+  for (const ch of command) {
+    if (quote !== undefined) {
+      if (ch === quote) quote = undefined
+      else cur += ch
+      continue
+    }
+    if (ch === '"' || ch === "'") { quote = ch; inWord = true; continue }
+    if (/\s/.test(ch)) {
+      if (inWord) { out.push(cur); cur = ''; inWord = false }
+      continue
+    }
+    cur += ch
+    inWord = true
+  }
+  if (quote !== undefined) return undefined
+  if (inWord) out.push(cur)
+  return out
+}
+
+const READ_ONLY = new Set(['ls', 'pwd', 'cat', 'head', 'tail', 'wc', 'grep', 'rg', 'find', 'which', 'echo', 'date', 'whoami', 'env', 'diff', 'stat', 'file', 'tree'])
+const GIT_SUBCOMMANDS = new Set(['status', 'diff', 'log', 'show', 'branch', 'fetch', 'pull', 'add', 'commit', 'stash', 'checkout', 'switch', 'restore', 'rev-parse', 'remote'])
+const GIT_REFUSED_OPTION = /^(?:-c.*|-x|--exec(?:=.*)?|--exec-path(?:=.*)?|--config(?:=.*)?|--config-env(?:=.*)?|--upload-pack(?:=.*)?|--receive-pack(?:=.*)?|--output(?:=.*)?|--git-dir(?:=.*)?|--work-tree(?:=.*)?|--namespace(?:=.*)?|--template(?:=.*)?|--ext-diff|--textconv)$/
+const PLAIN_NAME = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/
+const PACKAGE_NAME = /^@?[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)?$/
+
+/** Why a command is not on the degraded-mode allowlist, or undefined when it is. */
+export function degradedAllowlistRefusal(command: string): string | undefined {
+  if (DEGRADED_METACHAR.test(command)) return 'it holds a shell metacharacter'
+  const w = simpleWords(command)
+  if (!w || w.length === 0) return 'it could not be split into plain words'
+  const [head = '', ...args] = w
+  if (head.includes('/') || head.includes('=')) return `${head} is not a plain command name`
+  const has = (...flags: string[]) => args.some(a => flags.some(f => a === f || a.startsWith(`${f}=`)))
+  if (READ_ONLY.has(head)) {
+    if (head === 'env' && args.length > 0) return 'env runs other commands when given arguments'
+    if (head === 'find' && has('-exec', '-execdir', '-ok', '-okdir', '-delete', '-fprint', '-fprint0', '-fprintf', '-fls')) return 'find with an action that runs, deletes or writes'
+    if (head === 'rg' && has('--pre', '--pre-glob', '--search-zip', '-z')) return 'rg with a preprocessor runs other commands'
+    if (head === 'date' && has('-s', '--set')) return 'date --set changes the clock'
+    return undefined
+  }
+  switch (head) {
+    case 'git': {
+      const sub = args[0] ?? ''
+      if (!GIT_SUBCOMMANDS.has(sub)) return `git ${sub} is not on the list`
+      if (args.some(a => GIT_REFUSED_OPTION.test(a))) return 'git with -c, --exec, --config, --upload-pack, --output or a repository override'
+      if (sub === 'stash' && !(args.length === 2 && args[1] === 'list')) return 'only git stash list runs'
+      if (sub === 'remote' && !(args.length === 1 || (args.length === 2 && args[1] === '-v'))) return 'only git remote -v runs'
+      return undefined
+    }
+    case 'go': {
+      if (!['test', 'build', 'vet', 'run'].includes(args[0] ?? '')) return `go ${args[0] ?? ''} is not on the list`
+      if (has('-exec', '-toolexec', '-overlay', '-modfile') || args.some(a => /^-(?:exec|toolexec)/.test(a))) return 'go with a flag that runs another program'
+      return undefined
+    }
+    case 'npm': case 'pnpm': case 'yarn': {
+      const sub = args[0] ?? ''
+      if (sub === 'test' || sub === 't') return args.length === 1 ? undefined : `${head} test takes no extra arguments here`
+      if (sub === 'ci' || sub === 'install' || sub === 'i') return args.includes('--ignore-scripts') ? undefined : `${head} ${sub} runs install scripts without --ignore-scripts`
+      if (sub === 'run') return args.length === 2 && PLAIN_NAME.test(args[1] ?? '') ? undefined : `${head} run takes one script name`
+      return `${head} ${sub} is not on the list`
+    }
+    case 'npx': {
+      const tool = args[0] ?? ''
+      if (!PACKAGE_NAME.test(tool)) return 'npx needs a named tool first'
+      if (has('-c', '--call', '-p', '--package', '--shell')) return 'npx with a shell or package option'
+      return undefined
+    }
+    case 'pytest':
+      return undefined
+    case 'python': case 'python3':
+      return args[0] === '-m' && args[1] === 'pytest' ? undefined : 'only python -m pytest runs'
+    case 'make':
+      if (args.length === 0) return 'make needs a target'
+      return args.every(a => /^[A-Za-z0-9_.-]+$/.test(a) && !a.startsWith('-')) ? undefined : 'make takes plain targets only'
+    case 'cargo': case 'swift':
+      return ['build', 'test'].includes(args[0] ?? '') ? undefined : `${head} ${args[0] ?? ''} is not on the list`
+    case 'xcodebuild':
+      return args.includes('test') ? undefined : 'only xcodebuild test runs'
+    case 'rm':
+      // Only plain in-tree relative paths, recursive or not.
+      if (args.length === 0) return 'rm needs a target'
+      for (const a of args) {
+        if (/^-[rRfvi]+$/.test(a) || a === '--recursive' || a === '--force') continue
+        if (!isPlainRelPath(a)) return `rm of ${a}, which is not a plain path inside this folder`
+      }
+      return undefined
+  }
+  return `${head} is not on the known-safe list`
 }
 
 /**

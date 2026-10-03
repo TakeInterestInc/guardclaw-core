@@ -61,7 +61,7 @@ async function today($: EngineInterface): Promise<string> {
 function statusText(count: number, mode: Mode | undefined): string {
   const counted = `GuardClaw: ${count} blocked today`
   if (mode !== 'degraded') return counted
-  return `${counted} · scanner missing, only simple shell commands run. Install: ${INSTALL_LINE}`
+  return `${counted} · scanner missing, only simple known-safe commands run. Install: ${INSTALL_LINE}`
 }
 
 async function currentCount($: EngineInterface): Promise<number> {

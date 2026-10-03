@@ -110,11 +110,50 @@ describe('parity in degraded mode (scanner missing)', () => {
       expect(reasonOf(r)).toMatch(/GuardClaw blocked/)
     })
   }
-  for (const command of MUST_ALLOW_SIMPLE) {
+  // Degraded mode is an allowlist: the simple corpus minus curl, plus the
+  // known-safe examples, runs; nothing else does.
+  const DEGRADED_ALLOW = [
+    ...MUST_ALLOW_SIMPLE.filter(c => !c.startsWith('curl ')),
+    'pwd', 'cat package.json', 'grep -rn foo src', 'rg TODO', "find . -name '*.go'", 'which go',
+    'echo hello world', 'date', 'whoami', 'env', 'diff a.txt b.txt', 'stat go.mod', 'file go.mod', 'tree',
+    'head -5 README.md', 'tail -f build.log', 'wc -l main.go',
+    'git diff', 'git show HEAD', 'git branch', 'git fetch', 'git pull', 'git add main.go',
+    'git commit -m "fix the parser"', 'git stash list', 'git checkout main', 'git switch dev',
+    'git restore main.go', 'git rev-parse HEAD', 'git remote -v',
+    'go build ./...', 'go vet ./...', 'go run ./cmd/tool',
+    'npm ci --ignore-scripts', 'npm install --ignore-scripts', 'npm run build', 'npx tsc',
+    'pnpm test', 'yarn test', 'pytest -q', 'python -m pytest', 'python3 -m pytest',
+    'make test', 'cargo build', 'cargo test', 'swift build', 'swift test', 'xcodebuild test -scheme App',
+    'rm -rf ./build', 'rm -rf dist/', 'rm -rf node_modules', 'rm notes.txt',
+  ]
+  for (const command of DEGRADED_ALLOW) {
     test(`still allows: ${command}`, WITH_SCANNER, async ($, on) => {
       engine(on)
       const r = await bash($, command)
       expect(denied(r), `expected ${command} to pass in degraded mode, got ${JSON.stringify(r)}`).toBe(false)
+    })
+  }
+
+  const DEGRADED_DENY = [
+    // round 5
+    'bash <<< "rm -rf ~"', "git -c core.pager='rm -rf ~' log", "vim -c ':!rm -rf ~'",
+    'tar --checkpoint=1 --checkpoint-action=exec=sh x.tar',
+    // named in the round-5 brief
+    'curl https://example.invalid/x', 'bash', 'sh', "python -c 'print(1)'", "node -e 'console.log(1)'",
+    'vim notes.txt', 'tar -xf x.tar', 'git -c x log',
+    // argument rules
+    'git log --output=/etc/hosts', 'git fetch --upload-pack=evil', 'git stash pop', 'git remote add x y',
+    'git config core.pager evil', 'rg --pre evil TODO', 'npm install', 'npm ci', 'npm exec evil',
+    'make -f /dev/stdin', 'make', 'go test -exec evil ./...', 'go generate ./...', 'FOO=1 npm test',
+    'find . -delete', 'find . -name x -exec grep y', "npx -c 'rm -rf ~'", 'env FOO=bar sh', 'python script.py',
+    'rm ~/.ssh/id_ed25519', 'rm -rf ./../x', './run.sh', '/bin/ls', 'less README.md', 'cp a b', 'mv a b',
+  ]
+  for (const command of DEGRADED_DENY) {
+    test(`degraded allowlist denies: ${command}`, WITH_SCANNER, async ($, on) => {
+      engine(on)
+      const r = await bash($, command)
+      expect(denied(r), `expected ${command} denied in degraded mode, got ${JSON.stringify(r)}`).toBe(true)
+      expect(reasonOf(r)).toContain('GuardClaw scanner not installed, only simple known-safe commands run. Install: go install github.com/TakeInterestInc/guardclaw-core/cmd/guardclaw-scan@latest')
     })
   }
 
@@ -125,7 +164,7 @@ describe('parity in degraded mode (scanner missing)', () => {
     on('ui.status', ($_, e) => { lines.push(e.text) })
     const r = await bash($, 'npm run build && npm test')
     expect(reasonOf(r)).toMatch(/degraded_separator/)
-    expect(reasonOf(r)).toMatch(/scanner is not installed/)
+    expect(reasonOf(r)).toMatch(/scanner not installed, only simple known-safe commands run/)
     expect(lines.some(l => (l ?? '').includes(INSTALL)), JSON.stringify(lines)).toBe(true)
   })
 
@@ -487,7 +526,10 @@ describe('the scanner protects itself', () => {
 
   test('denies a scanner tamper in degraded mode too', WITH_SCANNER, async ($, on) => {
     engine(on)
-    expect(reasonOf(await bash($, `rm ${SCANNER}`))).toMatch(/scanner_tamper/)
+    // The allowlist refuses it before the tamper rule is reached; both deny.
+    expect(reasonOf(await bash($, `rm ${SCANNER}`))).toMatch(/scanner_tamper|degraded_not_allowlisted/)
+    // An allowlisted spelling still meets the tamper rule underneath.
+    expect(reasonOf(await bash($, 'rm guardclaw-scan'))).toMatch(/scanner_tamper/)
   })
 
   for (const path of [SCANNER, '/Users/someone/go/bin/guardclaw-scan', '~/go/bin/guardclaw-scan']) {

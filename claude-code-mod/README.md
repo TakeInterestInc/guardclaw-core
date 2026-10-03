@@ -132,26 +132,35 @@ deny the probe, the session runs **degraded** and the status line says so with
 the install line:
 
 ```
-GuardClaw: 0 blocked today · scanner missing, only simple shell commands run. Install: go install github.com/TakeInterestInc/guardclaw-core/cmd/guardclaw-scan@latest
+GuardClaw: 0 blocked today · scanner missing, only simple known-safe commands run. Install: go install github.com/TakeInterestInc/guardclaw-core/cmd/guardclaw-scan@latest
 ```
 
-In degraded mode every shell command holding a wrapper or metacharacter is
-denied outright: `;` `|` `&` a newline, a backtick, `$(`, `(`, `)`, `${`,
-`<(` and `>(`, `eval`, `exec`, `source`, `sudo`, `doas`, `su`, `xargs`,
-`sh -c` / `bash -c` / `zsh -c`, an interpreter given code with `-c` or `-e`,
-`find` with `-exec` or `-delete`, and a command led by a wrapper such as
-`nice`, `nohup`, `env`, `timeout` or `.`. So is a `$'..'` escape, a command
-name the shell expands first (a variable, a glob, a brace list), and a
-command the engine judges by its arguments (`crontab`, `ngrok`, `socat`,
-`ssh-keygen`, `launchctl`, `systemctl`, `kill` and the like). A single plain
-command is then checked by the JavaScript rules, which carry the Go
-agent-mode rm rule: a recursive `rm` passes only when every target is a plain
-relative path inside the folder (optional `./`, segments of
-`[A-Za-z0-9._-]`, no `.` or `..` segment, no glob, `~`, `$` or leading `/`).
-`rm -rf ./build`, `dist/` and `node_modules` pass; `rm -rf ./../x` does not.
-The mod's tests check that degraded mode denies every input in the Go
-agent-mode deny corpus (`guardian/security/testdata/agent_deny_corpus.json`). A scanner timeout in normal mode denies that call
-and never switches the session to degraded.
+**Degraded mode is deliberately strict: it is an allowlist.** Review rounds
+showed that a JavaScript denylist cannot keep up with a shell. Here strings,
+`git -c core.pager=...`, `vim -c ':!...'` and `tar --checkpoint-action` each
+slipped past one. So without the scanner a shell command runs only when it is
+one plain segment, with none of `;`, `|`, `&`, `<`, `>`, `$`, a backtick,
+`(`, `)`, `{`, `}`, `\` or a newline,
+and its first word and arguments are on this list:
+
+| Kind | Runs | Never |
+|---|---|---|
+| read-only | `ls`, `pwd`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, `which`, `echo`, `date`, `whoami`, `env` (no arguments), `diff`, `stat`, `file`, `tree` | `find -exec/-execdir/-ok/-delete/-fprint`, `rg --pre`, `date --set` |
+| git | `status`, `diff`, `log`, `show`, `branch`, `fetch`, `pull`, `add`, `commit`, `stash list`, `checkout`, `switch`, `restore`, `rev-parse`, `remote -v` | any `-c`, `--exec`, `-x`, `--config`, `--upload-pack`, `--receive-pack`, `--output`, `--git-dir`, `--work-tree` |
+| build and test | `go test/build/vet/run`, `npm`/`pnpm`/`yarn` `test`, `ci`/`install` with `--ignore-scripts`, `run <script>`, `npx <tool>`, `pytest`, `python -m pytest`, `make <target>`, `cargo build/test`, `swift build/test`, `xcodebuild test` | `go -exec/-toolexec`, `npx -c/--call/-p`, `make -f`, a leading `VAR=value` |
+| rm | `rm` whose every target is a plain relative path inside the folder (optional `./`, segments of `[A-Za-z0-9._-]`, no `.`, `..`, glob, `~`, `$` or leading `/`) | anything else |
+
+Everything else is denied with "GuardClaw scanner not installed, only simple
+known-safe commands run" and the install line. That includes `curl`, `bash`,
+`sh`, `python -c`, `node -e`, `vim`, `tar`, `cp` and `mv`, and every compound
+command, even ordinary ones such as `cd src && npm test`. Install the scanner
+to get those back. The earlier denylist gates still run first, and what the
+allowlist admits still meets the rm, protected-path and scanner-tamper
+rules. The mod's tests check that degraded mode denies every input in the
+Go agent-mode deny corpus (`guardian/security/testdata/agent_deny_corpus.json`).
+
+A scanner timeout in normal mode denies that call and never switches the
+session to degraded.
 
 ## Files: checked in JavaScript, both modes
 
