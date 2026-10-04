@@ -4,8 +4,10 @@
 package security
 
 import (
+	"encoding/json"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -154,11 +156,94 @@ func (d *PIIDetector) Detect(input string) []PIIMatch {
 	return matches
 }
 
-// DetectInMap detects PII in a map of values (recursive).
+// DetectInMap detects PII in decoded JSON values, retaining field context.
+// Match positions are local to the string or scalar field, not the whole map.
 func (d *PIIDetector) DetectInMap(input map[string]any) []PIIMatch {
 	var matches []PIIMatch
-	walkMapStrings(input, func(s string) { matches = append(matches, d.Detect(s)...) })
+	mapPIIFields(input, "", func(key string, value any) any {
+		matches = append(matches, d.detectField(key, value)...)
+		if s, ok := value.(string); ok {
+			matches = append(matches, d.Detect(s)...)
+		}
+		return value
+	})
 	return matches
+}
+
+// detectField finds signatures spanning the field label and its scalar value.
+// Check both decoded assignment text and JSON syntax so quoting or escaping
+// cannot discard context. A contextual match covers the entire field value;
+// retaining an unmatched suffix of a credential would still disclose it.
+func (d *PIIDetector) detectField(key string, value any) []PIIMatch {
+	if key == "" {
+		return nil
+	}
+	switch value.(type) {
+	case string, float64:
+	default:
+		return nil // Typed boolean/null controls are not credential text.
+	}
+	member, err := json.Marshal(map[string]any{key: value})
+	if err != nil {
+		return nil
+	}
+	encodedKey, _ := json.Marshal(key)
+	encodedValue, _ := json.Marshal(value)
+	valueText := string(encodedValue)
+	views := []struct {
+		text  string
+		start int
+	}{{string(member), len(encodedKey) + 2}}
+	switch v := value.(type) {
+	case string:
+		valueText = v
+	case float64:
+		// JSON may serialize long numeric credentials with a short exponent.
+		// A decimal view preserves the generic signature's length semantics.
+		valueText = strconv.FormatFloat(v, 'f', -1, 64)
+	}
+	if valueText != "" {
+		views = append(views, struct {
+			text  string
+			start int
+		}{key + "=" + valueText, len(key) + 1})
+	}
+	var matches []PIIMatch
+	seen := make(map[PIIType]bool)
+	for _, view := range views {
+		for _, match := range d.Detect(view.text) {
+			if match.StartIndex < view.start && match.EndIndex > view.start && !seen[match.Type] {
+				match.Value = valueText
+				match.StartIndex, match.EndIndex = 0, len(valueText)
+				match.Redacted = "[PII REDACTED]"
+				matches = append(matches, match)
+				seen[match.Type] = true
+			}
+		}
+	}
+	return matches
+}
+
+// mapPIIFields copies decoded JSON containers and visits scalar fields with
+// their labels. Array elements retain their field label; nested object members
+// use their own labels. Unknown Go types pass through unchanged.
+func mapPIIFields(value any, key string, fn func(string, any) any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, item := range v {
+			out[k] = mapPIIFields(item, k, fn)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = mapPIIFields(item, key, fn)
+		}
+		return out
+	default:
+		return fn(key, value)
+	}
 }
 
 // RedactString redacts all PII in a string.
@@ -219,7 +304,15 @@ func redactMatches(input string, matches []PIIMatch) string {
 
 // RedactMap redacts all PII in a map (recursive).
 func (d *PIIDetector) RedactMap(input map[string]any) map[string]any {
-	return mapValueStrings(input, d.RedactString).(map[string]any)
+	return mapPIIFields(input, "", func(key string, value any) any {
+		if len(d.detectField(key, value)) > 0 {
+			return "[PII REDACTED]"
+		}
+		if s, ok := value.(string); ok {
+			return d.RedactString(s)
+		}
+		return value
+	}).(map[string]any)
 }
 
 // HasPII returns true if the input contains any PII.
@@ -664,7 +757,7 @@ func (d *PIIDetector) loadPatterns() {
 
 	// Generic credential patterns in config/env formats
 	d.patterns[PIIGenericCredential] = &piiPattern{
-		regex:      regexp.MustCompile(`(?i)(?:api[_-]?key|access[_-]?token|client[_-]?secret|auth[_-]?token|bearer[_-]?token|app[_-]?secret|master[_-]?key|signing[_-]?key|encryption[_-]?key)\s*[:=]\s*["']?[A-Za-z0-9_/+=.-]{10,}["']?`),
+		regex:      regexp.MustCompile(`(?i)(?:api[_-]?key|access[_-]?token|client[_-]?secret|auth[_-]?token|bearer[_-]?token|app[_-]?secret|master[_-]?key|signing[_-]?key|encryption[_-]?key)["']?\s*[:=]\s*["']?[A-Za-z0-9_/+=.-]{10,}["']?`),
 		confidence: 0.90,
 		redactor:   func(s string) string { return "[CREDENTIAL REDACTED]" },
 	}

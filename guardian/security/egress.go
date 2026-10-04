@@ -114,8 +114,8 @@ func (e *EgressScanner) ScanAndRedact(output string) (string, *EgressResult) {
 	return e.ScanString(output)
 }
 
-// ScanMap scans a map output (structured tool response). It recursively scans
-// all string values for PII and exfil URLs.
+// ScanMap scans a structured tool response, retaining PII field context and
+// recursively scanning string values for PII and exfil URLs.
 func (e *EgressScanner) ScanMap(output map[string]any) (map[string]any, *EgressResult) {
 	result := &EgressResult{}
 	redacted := e.scanMapRecursive(output, result)
@@ -133,50 +133,24 @@ func (e *EgressScanner) scanMapRecursive(input map[string]any, result *EgressRes
 }
 
 func (e *EgressScanner) scanValue(input any, result *EgressResult) any {
-	switch v := input.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(v))
-		for key, value := range v {
-			// Preserve signatures that depend on JSON field names (password, type,
-			// and related context). Redact the scalar value, preserving valid JSON.
-			switch value.(type) {
-			case string, float64, bool, nil:
-				member, err := json.Marshal(map[string]any{key: value})
-				encodedKey, _ := json.Marshal(key)
-				if err == nil {
-					contextual := false
-					for _, match := range e.pii.Detect(string(member)) {
-						if match.StartIndex < len(encodedKey)+2 && match.EndIndex > len(encodedKey)+2 {
-							result.Findings = append(result.Findings, EgressFinding{Type: "pii", Detail: fmt.Sprintf("PII detected: %s", match.Type)})
-							contextual = true
-						}
-					}
-					if contextual {
-						out[key] = "[PII REDACTED]"
-						continue
-					}
-				}
+	return mapPIIFields(input, "", func(key string, value any) any {
+		if matches := e.pii.detectField(key, value); len(matches) > 0 {
+			for _, match := range matches {
+				result.Findings = append(result.Findings, EgressFinding{Type: "pii", Detail: fmt.Sprintf("PII detected: %s", match.Type)})
 			}
-			out[key] = e.scanValue(value, result)
+			return "[PII REDACTED]"
 		}
-		return out
-	case []any:
-		out := make([]any, len(v))
-		for i, value := range v {
-			out[i] = e.scanValue(value, result)
+		if s, ok := value.(string); ok {
+			redacted, r := e.ScanString(s)
+			result.Findings = append(result.Findings, r.Findings...)
+			if r.Blocked {
+				result.Blocked = true
+				result.Reason = r.Reason
+			}
+			return redacted
 		}
-		return out
-	case string:
-		redacted, r := e.ScanString(v)
-		result.Findings = append(result.Findings, r.Findings...)
-		if r.Blocked {
-			result.Blocked = true
-			result.Reason = r.Reason
-		}
-		return redacted
-	default:
-		return input
-	}
+		return value
+	})
 }
 
 // ScanJSON scans decoded JSON leaves, including root arrays and strings.
