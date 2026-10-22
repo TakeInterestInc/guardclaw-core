@@ -660,17 +660,29 @@ func mountedAliasTraversal(path string, fold bool) string {
 			}
 		default:
 			stack = append(stack, segment)
-			if len(stack) == 3 && stack[0] == volumeMarker && (segment == "etc" || segment == "var") ||
-				len(stack) == 4 && stack[0] == volumeMarker && stack[2] == "private" && (segment == "etc" || segment == "var") {
-				stack = []string{"private", segment}
+			if len(stack) == 3 && stack[0] == volumeMarker &&
+				(segment == "etc" || segment == "var" || (mounted && segment == "tmp")) {
+				// Keep the physical volume prefix while resolving the
+				// symlink. Later parents may leave and re-enter this volume.
+				stack = append(stack[:2], "private", segment)
+				mounted = true
+			} else if len(stack) == 4 && stack[0] == volumeMarker && stack[2] == "private" &&
+				(segment == "etc" || segment == "var") {
 				mounted = true
 			} else if mounted && len(stack) == 1 && (segment == "etc" || segment == "var" || segment == "tmp") {
+				// Traversal may also leave the mount for the host root.
 				stack = []string{"private", segment}
 			}
 		}
 	}
 	if !mounted {
 		return ""
+	}
+	// Canonicalize the final location only after all parent components have
+	// been resolved. Stripping the volume before traversal changes where a
+	// subsequent .. leads and loses the identity needed for volume re-entry.
+	if len(stack) >= 2 && stack[0] == volumeMarker {
+		stack = stack[2:]
 	}
 	return canonicalRoot("/"+strings.Join(stack, "/"), fold)
 }
