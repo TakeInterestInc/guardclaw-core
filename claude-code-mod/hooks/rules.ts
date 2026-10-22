@@ -158,6 +158,42 @@ function goInvocation(w: string[]): { sub: string; args: string[] } | undefined 
   return undefined
 }
 
+const GO_RUN_VALUE_FLAGS = new Set(`C p asmflags compiler buildmode gcflags gccgoflags installsuffix ldflags mod modfile overlay pgo pkgdir tags toolexec exec covermode coverpkg debug-actiongraph debug-runtime-trace debug-trace`.split(' '))
+const GO_RUN_BOOL_FLAGS = new Set(`a n x v asan msan race buildvcs json linkshared modcacherw trimpath work cover`.split(' '))
+const GO_RUN_EXPANSION = /[$`*?{[]/
+
+// cmd/go/internal/run compiles consecutive .go files, or exactly one package,
+// then passes the remaining argv to that program. Build flag values are not
+// package operands. Unknown option grammar cannot prove that boundary.
+function goRunRefusal(args: string[]): string | undefined {
+  let i = 0
+  for (; i < args.length; i++) {
+    const arg = args[i] ?? ''
+    if (arg === '--') { i++; break }
+    if (!arg.startsWith('-') || arg === '-') break
+    if (GO_RUN_EXPANSION.test(arg)) return 'go run with an unresolved build flag'
+    const flag = arg.replace(/^--?/, '').split('=')[0] ?? ''
+    if (flag === 'h' || flag === 'help') return undefined
+    if (GO_RUN_VALUE_FLAGS.has(flag)) {
+      if (!arg.includes('=')) {
+        const value = args[++i]
+        if (value === undefined || GO_RUN_EXPANSION.test(value)) return 'go run with an unresolved build-option operand'
+      }
+    } else if (!GO_RUN_BOOL_FLAGS.has(flag)) return 'go run with unknown build-option grammar'
+  }
+  const first = args[i]
+  if (first === undefined) return undefined
+  if (first.endsWith('.go')) {
+    for (; i < args.length && (args[i] ?? '').endsWith('.go'); i++) {
+      if (GO_RUN_EXPANSION.test(args[i] ?? '')) return 'go run with unresolved source-file operands'
+    }
+    return undefined
+  }
+  if (GO_RUN_EXPANSION.test(first)) return 'go run with an unresolved package operand'
+  const local = first.startsWith('./') || first.startsWith('../') || first.startsWith('/') || /^[A-Za-z]:[\\/]/.test(first)
+  return first.includes('@') && !local ? 'go run of a versioned remote module' : undefined
+}
+
 // --no-install maps to npm's explicit `yes=false`: libnpmexec refuses before
 // reify when a package is missing. It may still execute an existing npm cache;
 // this is not an installed-package or trustworthy-local-code attestation.
@@ -165,6 +201,51 @@ function npxRefusal(args: string[]): string | undefined {
   if (args[0] !== '--no-install' || !PACKAGE_NAME.test(args[1] ?? '')) return 'npx requires --no-install followed by one named tool'
   if (args.slice(1).some(a => /^(?:-[^-]*[ypc]|--(?:yes|install|no-install|package|call|shell)(?:=|$))/.test(a))) return 'npx with conflicting install, package or shell options'
   return undefined
+}
+
+// Resolve only documented literal Git global-option shapes before selecting
+// the subcommand. An unresolved option/operand must not hide a destructive
+// command by being mistaken for the command name.
+const GIT_GLOBAL_VALUES = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env'])
+const GIT_GLOBAL_FLAGS = new Set(['-p', '--paginate', '-P', '--no-pager', '--bare', '--no-replace-objects', '--no-lazy-fetch', '--no-optional-locks', '--no-advice', '--literal-pathspecs', '--glob-pathspecs', '--noglob-pathspecs', '--icase-pathspecs'])
+const GIT_GLOBAL_INFO = new Set(['-v', '--version', '-h', '--help', '--html-path', '--man-path', '--info-path', '--exec-path'])
+function gitInvocation(args: string[]): { sub: string; args: string[] } | undefined {
+  let i = 0
+  for (; i < args.length; i++) {
+    const arg = args[i] ?? ''
+    if (/[$`*?{[]/.test(arg)) return undefined
+    if (arg === '--') { i++; break }
+    if (!arg.startsWith('-') || arg === '-') break
+    if (GIT_GLOBAL_VALUES.has(arg)) {
+      const value = args[++i]
+      if (value === undefined || /[$`*?{[]/.test(value)) return undefined
+    } else if (arg.startsWith('-C') || arg.startsWith('-c')) {
+      // These two short global options accept an attached operand.
+      if (arg.length <= 2) return undefined
+    } else if (arg.includes('=')) {
+      const key = arg.slice(0, arg.indexOf('='))
+      if (!GIT_GLOBAL_VALUES.has(key) && key !== '--exec-path') return undefined
+    } else if (GIT_GLOBAL_INFO.has(arg)) {
+      return { sub: '', args: [] } // informational global modes exit before a subcommand
+    } else if (!GIT_GLOBAL_FLAGS.has(arg)) return undefined
+  }
+  const sub = args[i] ?? ''
+  if (/[$`*?{[]/.test(sub)) return undefined
+  return { sub, args: args.slice(i + 1) }
+}
+
+// Every index-reset form can discard a distinct staged snapshot, including
+// default/mixed/keep and pathspec/patch forms. Permit only an explicit literal
+// soft reset with at most one commit operand; it leaves index/worktree intact.
+function gitResetChangesIndex(args: string[]): boolean {
+  if (args.length === 1 && (args[0] === '-h' || args[0] === '--help')) return false
+  let soft = false, commits = 0
+  for (const arg of args) {
+    if (arg === '--soft') { soft = true; continue }
+    if (arg === '-q' || arg === '--quiet') continue
+    if (arg.startsWith('-') || /[$`*?{[]/.test(arg) || ++commits > 1) return true
+  }
+  return !soft
 }
 
 /** Credential reads are refused before their contents can enter a transcript. */
@@ -182,16 +263,23 @@ export function protectedRead(path: string, home?: string, realPath?: string): V
 const RSYNC_VALUE_OPTIONS = new Set(`rsh rsync-path include exclude filter include-from exclude-from files-from password-file log-file log-file-format out-format backup-dir suffix temp-dir partial-dir compare-dest copy-dest link-dest chmod chown usermap groupmap remote-option address port sockopts bwlimit stop-after stop-at timeout contimeout max-delete max-size min-size block-size modify-window checksum-seed checksum-choice compress-choice compress-level skip-compress iconv info debug outbuf`.split(' '))
 const RSYNC_FLAG_OPTIONS = new Set(`archive recursive relative no-relative times perms owner group devices specials hard-links links copy-links safe-links copy-unsafe-links copy-dirlinks keep-dirlinks verbose quiet checksum compress progress partial inplace append append-verify existing ignore-existing ignore-errors force prune-empty-dirs numeric-ids dry-run update backup whole-file one-file-system itemize-changes stats human-readable protect-args secluded-args old-args msgs2stderr blocking-io non-blocking-io fsync mkpath omit-dir-times omit-link-times atimes open-noatime crtimes executability super fake-super no-super acls xattrs no-delete`.split(' '))
 
-function rsyncDeletionRefusal(args: string[]): Verdict | undefined {
-  args = args.flatMap((arg, i) => {
-    const before = args[i - 1] ?? ''
-    if (/^\d*[<>][<>&|]*$/.test(before)) return []
-    const at = arg.search(/[<>]/)
-    if (at < 0 || arg.includes('<(') || arg.includes('>(')) return [arg]
-    const prefix = arg.slice(0, at)
-    return prefix && !/^\d+$/.test(prefix) ? [prefix] : []
-  })
+type RsyncDeletionOptions = { operands: string[]; destination: boolean; sources: boolean; unknown: boolean }
+
+function parseRsyncDeletionOptions(args: string[], depth = 0): RsyncDeletionOptions {
+  const modern = parseRsyncDeletionOptionsMode(args, depth, false)
+  const legacy = parseRsyncDeletionOptionsMode(args, depth, true)
+  modern.destination ||= legacy.destination
+  modern.sources ||= legacy.sources
+  modern.unknown ||= legacy.unknown
+  return modern
+}
+
+// Version-unattested input needs both modern and legacy/--old-args argv
+// interpretations. Each is a separate bounded walk, with no recursive fork.
+function parseRsyncDeletionOptionsMode(args: string[], depth: number, legacy: boolean): RsyncDeletionOptions {
+  if (depth >= 16) return { operands: [], destination: true, sources: true, unknown: true }
   const operands: string[] = []
+  const forwarded: string[] = []
   let destination = false, sources = false, unknown = false, endOptions = false
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? ''
@@ -200,6 +288,14 @@ function rsyncDeletionRefusal(args: string[]): Verdict | undefined {
       const name = arg.slice(2).split('=')[0] ?? ''
       if (name === 'del' || name.startsWith('delete') || (name.length >= 3 && 'delete'.startsWith(name))) destination = true
       else if (name.startsWith('remove-source') || name.startsWith('remove-sent') || (name.length >= 'remov'.length && 'remove-source-files'.startsWith(name))) sources = true
+      else if (name.length >= 'remot'.length && 'remote-option'.startsWith(name)) {
+        let value = arg.slice(arg.indexOf('=') + 1)
+        if (!arg.includes('=')) {
+          if (++i >= args.length) { unknown = true; continue }
+          value = args[i] ?? ''
+        }
+        forwarded.push(value)
+      }
       else if (RSYNC_VALUE_OPTIONS.has(name)) {
         if (!arg.includes('=') && ++i >= args.length) unknown = true
       } else if (!arg.includes('=') && !RSYNC_FLAG_OPTIONS.has(name)) unknown = true
@@ -208,7 +304,16 @@ function rsyncDeletionRefusal(args: string[]): Verdict | undefined {
     if (!endOptions && arg.startsWith('-') && arg.length > 1) {
       for (let j = 1; j < arg.length; j++) {
         const ch = arg[j] ?? ''
-        if ('efBMT@'.includes(ch)) {
+        if (ch === 'M') {
+          let value = arg.slice(j + 1)
+          if (value === '') {
+            if (++i >= args.length) { unknown = true; break }
+            value = args[i] ?? ''
+          }
+          forwarded.push(value)
+          break
+        }
+        if ('efBT@'.includes(ch)) {
           if (j === arg.length - 1 && ++i >= args.length) unknown = true
           break
         }
@@ -218,6 +323,26 @@ function rsyncDeletionRefusal(args: string[]): Verdict | undefined {
     }
     operands.push(arg)
   }
+  if (forwarded.length) {
+    const remoteArgs = legacy ? forwarded.flatMap(arg => arg.split(/[ \t\r\n]+/).filter(Boolean)) : forwarded
+    const remote = parseRsyncDeletionOptionsMode(remoteArgs, depth + 1, legacy)
+    destination ||= remote.destination
+    sources ||= remote.sources
+    unknown ||= remote.unknown
+  }
+  return { operands, destination, sources, unknown }
+}
+
+function rsyncDeletionRefusal(args: string[]): Verdict | undefined {
+  args = args.flatMap((arg, i) => {
+    const before = args[i - 1] ?? ''
+    if (/^\d*[<>][<>&|]*$/.test(before)) return []
+    const at = arg.search(/[<>]/)
+    if (at < 0 || arg.includes('<(') || arg.includes('>(')) return [arg]
+    const prefix = arg.slice(0, at)
+    return prefix && !/^\d+$/.test(prefix) ? [prefix] : []
+  })
+  const { operands, destination, sources, unknown } = parseRsyncDeletionOptions(args)
   if (!destination && !sources) return undefined
   const plain = (path: string) => isPlainRelPath(path) && !path.split('/').includes('.git') && !protectedWrite(path)
   if (unknown || operands.length < 2 || (destination && !plain(operands[operands.length - 1] ?? '')) || (sources && operands.slice(0, -1).some(p => !plain(p)))) {
@@ -238,19 +363,19 @@ function commandAdmission(command: string, home?: string): Verdict | undefined {
     }
     if (head === 'go') {
       const go = goInvocation(w)
-      if (go?.sub === 'run' && go.args.some(a => a.includes('@') || /[$`*?{[]/.test(a))) return { rule: 'remote_execution', reason: 'go run of a versioned remote module or unresolved package' }
+      if (go?.sub === 'run') {
+        const refused = goRunRefusal(go.args)
+        if (refused) return { rule: 'remote_execution', reason: refused }
+      }
       const output = writeTargets(segment)
       if (output.length && (w.some(a => /^-C/.test(a)) || /(?:^|[\s;&|()])(?:cd|pushd|popd|chroot)\b/.test(normalize(command)) || /[$`*?{[]/.test(segment) || output.some(p => p.split('/').includes('..')))) return { rule: 'ambiguous_mutation', reason: 'Go output with unresolved directory or expansion' }
     }
     if (head === 'git') {
-      let i = 0
-      while ((args[i] ?? '').startsWith('-')) {
-        const flag = args[i++] ?? ''
-        if (['-C', '-c', '--git-dir', '--work-tree', '--namespace'].includes(flag)) i++
-      }
-      const sub = args[i] ?? '', flags = args.slice(i + 1)
+      const git = gitInvocation(args)
+      if (!git) return { rule: 'git_discard_work', reason: 'unresolved Git global options cannot prove the command preserves work' }
+      const sub = git.sub, flags = git.args
       const force = flags.includes('--force') || flags.some(a => /^-[^-]*f/.test(a))
-      if (sub === 'restore' || sub === 'checkout' || (sub === 'switch' && (force || flags.includes('--discard-changes') || flags.some(a => a === '--force-create' || a.startsWith('--force-create=') || /^-[^-]*C/.test(a)))) || (sub === 'branch' && (force || flags.some(a => /^-[^-]*D/.test(a)))) || (sub === 'reset' && flags.includes('--hard')) || (sub === 'clean' && force) || (sub === 'stash' && ['drop', 'clear'].includes(flags[0] ?? ''))) {
+      if (sub === 'restore' || sub === 'checkout' || (sub === 'switch' && (force || flags.includes('--discard-changes') || flags.some(a => a === '--force-create' || a.startsWith('--force-create=') || /^-[^-]*C/.test(a)))) || (sub === 'branch' && (force || flags.some(a => /^-[^-]*D/.test(a)))) || (sub === 'reset' && gitResetChangesIndex(flags)) || (sub === 'clean' && force) || (sub === 'stash' && ['drop', 'clear'].includes(flags[0] ?? ''))) {
         return { rule: 'git_discard_work', reason: 'discarding work or forcing branch deletion requires an explicit human operation' }
       }
     }

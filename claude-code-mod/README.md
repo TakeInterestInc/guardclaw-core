@@ -138,16 +138,37 @@ acquisition in both modes. Use `npx --no-install <named-tool>` for an existing
 tool; conflicting install/package/shell flags and shell-expanded arguments are
 refused. This prevents a missing package from being installed for that call;
 it does not attest the package or an existing npm cache as trustworthy.
+For `go run`, known build-option operands are consumed before identifying its
+one package or consecutive `.go` source files. Following program arguments,
+such as an email address or quoted `*`, are not package acquisition. Unknown
+build-option syntax and expanded package/source operands remain refused. Local
+Go programs and their dependencies are not attested as safe by this check.
 
 Go build/test `-o` destinations meet the same protected-write checks as redirects.
 Output combined with a directory change, expansion or parent traversal refuses
 because the lexical matcher cannot prove its destination. `rsync` deletion
 variants require a plain in-tree destination; source-removal variants require
-plain in-tree sources. Option operands and `--` are parsed separately. Filesystem
+plain in-tree sources. Option operands and `--` are parsed separately, including
+the collected remote argv forwarded by `-M`/`--remote-option`. The check covers
+both modern argument preservation and legacy/`--old-args` whitespace splitting
+because it cannot attest the installed rsync version. A whitespace-bearing
+forwarded value that becomes destructive under the legacy interpretation may
+therefore be refused conservatively. Forwarding nesting is capped at 16 and
+fails closed. This does not model arbitrary remote-shell expansion. Filesystem
 symlinks or effects of an arbitrary called program are not proved safe by a
 plain spelling.
 
 Discarding Git work, forced branch changes and recursive `.git` deletion refuse.
+Index-reset modes (including default/mixed, merge, keep, pathspec and patch
+forms) can discard a distinct staged snapshot, so they require a human
+operation. Only a literal `git reset --soft [commit]` with optional `-q`/`--quiet`
+passes this reset rule; unknown/abbreviated options and expanded operands are
+refused. This preserves index/worktree content, not an assurance about changing
+branch history. A bounded Git global-option reader consumes known operands,
+including separate/attached `--config-env`, before selecting the subcommand;
+unresolved global grammar is refused instead of hiding a destructive command.
+This does not attest local Git aliases, configuration or hooks as trustworthy.
+Degraded mode retains its existing refusal of all reset commands.
 `git checkout` is ambiguous between branch switching and path restoration, so
 use `git switch <branch>` for a normal branch transition. Run an intentional
 discard, restoration or forced deletion yourself outside the agent. The mod has
