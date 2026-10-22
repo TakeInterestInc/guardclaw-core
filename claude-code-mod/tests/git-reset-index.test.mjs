@@ -52,7 +52,9 @@ test('isolated native Git oracle demonstrates staged-content loss and soft prese
     writeFileSync(file, 'fixed unique staged\n'); git('add', 'tracked.txt');
     const staged = git('show', ':tracked.txt');
     const work = mode === '--merge' || mode === '--mer' ? staged : 'fixed distinct unstaged\n';
-    writeFileSync(file, work);
+    // Keep merge's staged-only case untouched after add: even an identical
+    // rewrite can make its index stat stale and legitimately abort --merge.
+    if (work !== staged) writeFileSync(file, work);
     writeFileSync(join(root, mode.slice(2) + '.staged-backup'), staged);
     writeFileSync(join(root, mode.slice(2) + '.work-backup'), work);
     git('reset', mode, 'HEAD');
