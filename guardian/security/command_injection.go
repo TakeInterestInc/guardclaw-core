@@ -350,8 +350,8 @@ type CommandInjectionResult struct {
 
 // CheckCommandInjection analyzes input for command injection attempts.
 func CheckCommandInjection(input string) *CommandInjectionResult {
-	if matchExplicitDownloadRun(input) {
-		return explicitDownloadRunResult()
+	if result := checkExplicitDownloadRun(input); result != nil {
+		return result
 	}
 	return checkCommandInjectionPatterns(input)
 }

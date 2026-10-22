@@ -198,9 +198,18 @@ their location while sharing prior writes, so a later child `cd` cannot erase a
 write made in the parent's directory. Directory effects assign new tokens;
 separate changes never imply equivalent locations. Cwd-only wrappers share
 absolute candidates; changed-root wrappers isolate them. Detection is monotonic.
-One bounded typed Bash startup reader selects its inline/file operand and
-syntax-only mode; unknown grammar retains conservative inline analysis without
-a noexec exemption. Source commands consume a supported `--` terminator.
+One typed invocation proof records shell-specific option/source ownership and
+keeps later positional data separate. Bash, Dash/sh and zsh use distinct bounded
+startup profiles; advanced ksh/ash options remain unqualified. Unknown grammar
+never grants a noexec exemption or silently hides a matching download candidate.
+A candidate in unresolved source ownership is refused with the distinct
+`download_source_unresolved` rule, without asserting execution or exporting raw
+source/path details. Unknown inline origin follows descendant traversal and
+persistent writes, so a later known sink cannot upgrade an uncertain write.
+Known local-script data arguments and option values retain ordinary behavior;
+unknown commands without a relevant download candidate do too. Existing Bash
+syntax-only exemptions remain bounded to their native-backed forms. Source
+commands consume a supported `--` terminator.
 Curl requires one literal URL and one explicit output; its own URL glob syntax
 is excluded even inside shell quotes. Wget's supported single-URL `-O` form
 uses its last output selection. Stdout outputs infer no file. This association

@@ -11,11 +11,33 @@ import (
 // This is deliberately a literal, same-input boundary. It does not infer
 // filesystem aliases, changed directories, config-selected output names,
 // arbitrary interpreter loaders, or effects from an earlier invocation.
-func matchExplicitDownloadRun(input string) bool {
+type downloadFlowOutcome uint8
+
+const (
+	downloadFlowNone downloadFlowOutcome = iota
+	downloadFlowUnresolved
+	downloadFlowCandidate
+)
+
+func explicitDownloadFlow(input string) downloadFlowOutcome {
 	p := &shParser{s: input}
-	state := &explicitDownloadRun{context: &downloadWrites{files: make(map[downloadIdentity]bool)}}
+	state := &explicitDownloadRun{context: &downloadWrites{files: make(map[downloadIdentity]downloadWriteEvidence)}, certainty: invocationEstablished}
 	state.list(p.parseList(0), 0)
-	return state.context.bad
+	return state.context.outcome
+}
+func matchExplicitDownloadRun(input string) bool {
+	return explicitDownloadFlow(input) != downloadFlowNone
+}
+func checkExplicitDownloadRun(input string) *CommandInjectionResult {
+	switch explicitDownloadFlow(input) {
+	case downloadFlowCandidate:
+		return explicitDownloadRunResult()
+	case downloadFlowUnresolved:
+		return &CommandInjectionResult{Detected: true, Category: CmdCategoryBackdoor, PatternName: "download_source_unresolved",
+			Indicators: []string{"literal_download_candidate", "unresolved_shell_source_proof"},
+			Reason:     "A literal download candidate has unresolved shell source ownership or invocation provenance"}
+	}
+	return nil
 }
 
 // Writes persist independently of process location. Opaque location tokens do
@@ -24,14 +46,21 @@ type downloadIdentity struct {
 	root, cwd uint64
 	file      string
 }
+type downloadWriteEvidence struct {
+	certainty invocationCertainty
+	origin    invocationOrigin
+}
 type downloadWrites struct {
-	files map[downloadIdentity]bool
-	next  uint64
-	bad   bool
+	files            map[downloadIdentity]downloadWriteEvidence
+	next             uint64
+	outcome          downloadFlowOutcome
+	unresolvedOrigin invocationOrigin
 }
 type explicitDownloadRun struct {
 	context   *downloadWrites
 	root, cwd uint64
+	certainty invocationCertainty
+	origin    invocationOrigin
 }
 
 func (s *explicitDownloadRun) token() uint64                    { s.context.next++; return s.context.next }
@@ -112,12 +141,43 @@ func downloadWordIsLiteral(word shWord) bool {
 	return quote == 0
 }
 
-func (s *explicitDownloadRun) matches(word shWord) bool {
+func (s *explicitDownloadRun) recordSource(word shWord, selection invocationCertainty, origin invocationOrigin) {
 	file, ok := literalDownloadPath(word)
 	if !ok {
-		return false
+		return
 	}
-	return s.context.files[s.identity(file)]
+	write, exists := s.context.files[s.identity(file)]
+	if !exists {
+		return
+	}
+	strength := weakerInvocation(s.certainty, weakerInvocation(selection, write.certainty))
+	if write.certainty == invocationUncertain {
+		origin = write.origin
+	}
+	if s.certainty == invocationUncertain {
+		origin = s.origin
+	}
+	if strength == invocationUncertain && s.context.unresolvedOrigin.reason == "" {
+		s.context.unresolvedOrigin = origin
+	}
+	outcome := downloadFlowUnresolved
+	if strength == invocationEstablished {
+		outcome = downloadFlowCandidate
+	}
+	if outcome > s.context.outcome {
+		s.context.outcome = outcome
+	}
+}
+func (s *explicitDownloadRun) invocationSources(proof shellInvocation, args []shWord) {
+	if proof.mode == "unknown" {
+		for i, role := range proof.roles {
+			if role == invocationUnowned {
+				s.recordSource(args[i], invocationUncertain, invocationOrigin{profile: proof.profile, reason: proof.reason})
+			}
+		}
+	} else if proof.mode == "file" && !proof.noexec && proof.selected >= 0 {
+		s.recordSource(args[proof.selected], proof.execution, invocationOrigin{profile: proof.profile, reason: "uncertified_execution_mode"})
+	}
 }
 
 func (s *explicitDownloadRun) list(commands []shCmd, depth int) {
@@ -166,8 +226,8 @@ func (s *explicitDownloadRun) words(words []shWord, depth int) {
 		s.changeDirectory()
 		return
 	}
-	if strings.Contains(words[i].text, "/") && s.matches(words[i]) {
-		s.context.bad = true
+	if strings.Contains(words[i].text, "/") {
+		s.recordSource(words[i], invocationEstablished, invocationOrigin{})
 	}
 	if strings.ContainsAny(words[i].text, "/\\") {
 		switch name {
@@ -182,32 +242,32 @@ func (s *explicitDownloadRun) words(words []shWord, depth int) {
 	}
 	fileArgs := rsyncWithoutRedirects(args)
 	if name == "." || name == "source" {
-		terminated := len(fileArgs) > 0 && fileArgs[0].text == "--"
-		if terminated {
-			fileArgs = fileArgs[1:]
-		}
-		if len(fileArgs) > 0 && (terminated || !strings.HasPrefix(fileArgs[0].text, "-")) && s.matches(fileArgs[0]) {
-			s.context.bad = true
-		}
-	} else if name == "sh" || name == "bash" || name == "dash" || name == "ksh" || name == "zsh" || name == "ash" {
-		if file, ok := literalShellFile(name, fileArgs); ok && s.matches(file) {
-			s.context.bad = true
-		}
+		s.invocationSources(readSourceInvocation(fileArgs), fileArgs)
+	} else if invocationShell(name) {
+		s.invocationSources(readShellInvocation(name, fileArgs), fileArgs)
 	}
 	if name == "curl" || name == "wget" {
 		for _, file := range explicitFetchOutputs(name, fileArgs) {
 			if clean, ok := literalDownloadPath(file); ok {
-				s.context.files[s.identity(clean)] = true
+				key := s.identity(clean)
+				previous, exists := s.context.files[key]
+				if !exists || s.certainty > previous.certainty {
+					s.context.files[key] = downloadWriteEvidence{certainty: s.certainty, origin: s.origin}
+				}
 			}
 		}
 	}
-	for _, inner := range innerScripts(name, args) {
-		p := &shParser{s: inner}
+	for _, program := range innerPrograms(name, args) {
+		p := &shParser{s: program.script()}
 		commands := p.parseList(0)
 		if name == "eval" {
 			s.list(commands, depth+1)
 		} else {
 			child := s.childState()
+			child.certainty = weakerInvocation(s.certainty, program.certainty)
+			if s.certainty == invocationEstablished && program.certainty == invocationUncertain {
+				child.origin = program.origin
+			}
 			child.list(commands, depth+1)
 		}
 	}
@@ -219,45 +279,6 @@ func (s *explicitDownloadRun) words(words []shWord, depth int) {
 			child.words(inner, depth+1)
 		}
 	}
-}
-
-// Match only file-taking shell forms whose option semantics are known here.
-// Inline programs are opened by innerScripts; -s reads stdin. Other startup
-// files and shell-specific option forms remain outside this narrow boundary.
-func literalShellFile(name string, args []shWord) (shWord, bool) {
-	if name == "bash" {
-		invocation := readBashInvocation(args)
-		return invocation.selected, invocation.known && invocation.mode == "file" && !invocation.noexec
-	}
-	if shellSyntaxOnly(name, args) {
-		return shWord{}, false
-	}
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		t := arg.text
-		// These Bash startup options consume a separate operand. The operand
-		// is neither a script filename nor another startup option.
-		if name == "bash" && (t == "-o" || t == "+o" || t == "-O" || t == "+O" || t == "--rcfile" || t == "--init-file") {
-			i++
-			if i >= len(args) {
-				return shWord{}, false
-			}
-			continue
-		}
-		if t == "--" {
-			if i+1 < len(args) {
-				return args[i+1], true
-			}
-			return shWord{}, false
-		}
-		if t == "" || (t[0] != '-' && t[0] != '+') {
-			return arg, true
-		}
-		if t == "-" || t == "+" || strings.HasPrefix(t, "--") || strings.Trim(t[1:], "efnuvxilpr") != "" {
-			return shWord{}, false
-		}
-	}
-	return shWord{}, false
 }
 
 // Inspect wrapper options in their parsed command position. Values consumed
