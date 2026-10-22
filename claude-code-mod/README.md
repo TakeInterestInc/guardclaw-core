@@ -143,7 +143,13 @@ Go build/test `-o` destinations meet the same protected-write checks as redirect
 Output combined with a directory change, expansion or parent traversal refuses
 because the lexical matcher cannot prove its destination. `rsync` deletion
 variants require a plain in-tree destination; source-removal variants require
-plain in-tree sources. Option operands and `--` are parsed separately. Filesystem
+plain in-tree sources. Option operands and `--` are parsed separately, including
+the collected remote argv forwarded by `-M`/`--remote-option`. The check covers
+both modern argument preservation and legacy/`--old-args` whitespace splitting
+because it cannot attest the installed rsync version. A whitespace-bearing
+forwarded value that becomes destructive under the legacy interpretation may
+therefore be refused conservatively. Forwarding nesting is capped at 16 and
+fails closed. This does not model arbitrary remote-shell expansion. Filesystem
 symlinks or effects of an arbitrary called program are not proved safe by a
 plain spelling.
 
