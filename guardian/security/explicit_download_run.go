@@ -12,9 +12,6 @@ import (
 // filesystem aliases, changed directories, config-selected output names,
 // arbitrary interpreter loaders, or effects from an earlier invocation.
 func matchExplicitDownloadRun(input string) bool {
-	if agentChangesDirectory(input) {
-		return false
-	}
 	p := &shParser{s: input}
 	state := &explicitDownloadRun{files: make(map[string]bool)}
 	state.list(p.parseList(0), 0)
@@ -22,8 +19,39 @@ func matchExplicitDownloadRun(input string) bool {
 }
 
 type explicitDownloadRun struct {
-	files map[string]bool
-	bad   bool
+	files      map[string]bool
+	parent     *explicitDownloadRun // inherited identities without copying the map
+	bad        bool
+	cwdChanged bool
+}
+
+func (s *explicitDownloadRun) changeDirectory() {
+	s.cwdChanged = true
+	for file := range s.files {
+		if !path.IsAbs(file) {
+			delete(s.files, file)
+		}
+	}
+}
+
+func (s *explicitDownloadRun) childState(inherit bool) *explicitDownloadRun {
+	child := &explicitDownloadRun{files: make(map[string]bool)}
+	if inherit {
+		child.parent = s
+	}
+	return child
+}
+
+func (s *explicitDownloadRun) absorbChild(child *explicitDownloadRun, propagate bool) {
+	s.bad = s.bad || child.bad
+	if !propagate {
+		return
+	}
+	for file := range child.files {
+		if !child.cwdChanged || path.IsAbs(file) {
+			s.files[file] = true
+		}
+	}
 }
 
 // Cooked metacharacters can be literal when quoted or escaped. Consult the
@@ -95,7 +123,18 @@ func downloadWordIsLiteral(word shWord) bool {
 
 func (s *explicitDownloadRun) matches(word shWord) bool {
 	file, ok := literalDownloadPath(word)
-	return ok && s.files[file]
+	if !ok {
+		return false
+	}
+	for scope := s; scope != nil; scope = scope.parent {
+		if scope.files[file] {
+			return true
+		}
+		if scope.cwdChanged && !path.IsAbs(file) {
+			return false
+		}
+	}
+	return false
 }
 
 func (s *explicitDownloadRun) list(commands []shCmd, depth int) {
@@ -105,7 +144,9 @@ func (s *explicitDownloadRun) list(commands []shCmd, depth int) {
 	for _, command := range commands {
 		for _, word := range command.words {
 			for _, sub := range word.subs {
-				s.list(sub, depth+1)
+				child := s.childState(true)
+				child.list(sub, depth+1)
+				s.absorbChild(child, true)
 			}
 		}
 		s.words(command.words, depth)
@@ -117,11 +158,30 @@ func (s *explicitDownloadRun) words(words []shWord, depth int) {
 		return
 	}
 	words = rsyncWithoutRedirects(words)
-	i, _ := commandIndex(words)
+	wrapperCwd, wrapperRoot := false, false
+	i, _ := commandIndexObserved(words, func(name string, options []shWord) {
+		cwd, root := explicitWrapperDirectoryEffect(name, options)
+		wrapperCwd = wrapperCwd || cwd
+		wrapperRoot = wrapperRoot || root
+	})
 	if i >= len(words) {
 		return
 	}
+	if wrapperCwd {
+		// A cwd-only child shares absolute identities in both directions. A
+		// changed root isolates both inputs and outputs. Relative identities
+		// are invalidated by the child's cwd effect.
+		child := s.childState(!wrapperRoot)
+		child.changeDirectory()
+		child.words(words[i:], depth+1)
+		s.absorbChild(child, !wrapperRoot)
+		return
+	}
 	name, args, _ := splitCommand(words)
+	if name == "cd" || name == "pushd" || name == "popd" {
+		s.changeDirectory()
+		return
+	}
 	if strings.Contains(words[i].text, "/") && s.matches(words[i]) {
 		s.bad = true
 	}
@@ -155,10 +215,23 @@ func (s *explicitDownloadRun) words(words []shWord, depth int) {
 	}
 	for _, inner := range innerScripts(name, args) {
 		p := &shParser{s: inner}
-		s.list(p.parseList(0), depth+1)
+		commands := p.parseList(0)
+		if name == "eval" {
+			s.list(commands, depth+1)
+		} else {
+			child := s.childState(true)
+			child.list(commands, depth+1)
+			s.absorbChild(child, true)
+		}
 	}
-	for _, inner := range innerCommands(name, args) {
-		s.words(inner, depth+1)
+	// find's expression/value grammar and -execdir working directory need a
+	// separate model. Do not infer provenance inside its command templates.
+	if name != "find" {
+		for _, inner := range innerCommands(name, args) {
+			child := s.childState(true)
+			child.words(inner, depth+1)
+			s.absorbChild(child, true)
+		}
 	}
 }
 
@@ -169,8 +242,18 @@ func literalShellFile(name string, args []shWord) (shWord, bool) {
 	if shellSyntaxOnly(name, args) {
 		return shWord{}, false
 	}
-	for i, arg := range args {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		t := arg.text
+		// These Bash startup options consume a separate operand. The operand
+		// is neither a script filename nor another startup option.
+		if name == "bash" && (t == "-o" || t == "+o" || t == "-O" || t == "+O" || t == "--rcfile" || t == "--init-file") {
+			i++
+			if i >= len(args) {
+				return shWord{}, false
+			}
+			continue
+		}
 		if t == "--" {
 			if i+1 < len(args) {
 				return args[i+1], true
@@ -185,6 +268,33 @@ func literalShellFile(name string, args []shWord) (shWord, bool) {
 		}
 	}
 	return shWord{}, false
+}
+
+// Inspect wrapper options in their parsed command position. Values consumed
+// by -u/--unset or sudo's user/group flags cannot become directory options.
+// This boundary deliberately does not infer env -S or unknown wrapper syntax.
+func explicitWrapperDirectoryEffect(name string, args []shWord) (cwd, root bool) {
+	if name == "chroot" {
+		return true, true
+	}
+	if name != "env" && name != "sudo" {
+		return false, false
+	}
+	for i := 0; i < len(args); i++ {
+		t := args[i].text
+		if t == "--" {
+			break
+		}
+		if len(t) < 2 || t[0] != '-' {
+			continue
+		}
+		operand, change, rootChange := wrapperOption(name, t)
+		cwd, root = cwd || change, root || rootChange
+		if operand {
+			i++
+		}
+	}
+	return
 }
 
 var literalCurlFlags = strings.Fields("fail fail-with-body silent show-error location location-trusted insecure compressed globoff head ipv4 ipv6 http1.0 http1.1 http2 no-progress-meter")

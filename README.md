@@ -192,7 +192,13 @@ other shells receive no syntax-only exemption.
 This is a bounded lexical candidate check, not proof of filesystem identity or
 complete download provenance. It uses the existing parser and known wrapper/
 option grammar; unsupported options discard that fetch's inferred outputs.
-Inputs that appear to change directory, remote/config-selected names, residual
+Directory changes are identified from parsed commands and consumed wrapper
+options, rather than inert argument text. Known Bash startup-option operands
+are consumed before selecting its script. Actual parent directory changes
+invalidate prior relative identities; they cannot erase execution already
+identified. Wrapper and inner-shell directory effects are scoped separately.
+Find command templates, full shell control-flow/cwd resolution,
+remote/config-selected names, residual
 operator-bearing words, tee flow, modules/other interpreters, filesystem and
 PATH aliases, and separate invocations remain outside this boundary. A source
 command can search PATH, so a matching unqualified source name is conservative.
