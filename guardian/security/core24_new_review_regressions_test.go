@@ -89,4 +89,3 @@ func TestCurlSurplusOutputsNativeOracle(t *testing.T) {
 		t.Fatalf("surplus output unexpectedly exists: %v", err)
 	}
 }
-
