@@ -190,6 +190,27 @@ than 1% of benign lines are denied or fewer than 95% of malicious lines get a
 non-`allow` decision. See [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [fixture notes](testdata/corpus/README.md).
 
+## Engine input budget
+
+`tiered.Engine.Scan` does not impose a byte or execution-time limit. Callers
+handling untrusted events should reject events larger than **4 KiB before
+scanning**, and choose a smaller limit when their measured request budget needs
+it. Never silently truncate an event: that can remove the malicious part while
+returning an allow decision. Scan separate logical events individually rather
+than concatenating a transcript or batch into one call. A caller's input limit
+is still needed when using a wrapper with a larger transport limit.
+
+The composite RE2 tier dominates the large multi-command workload in
+`BenchmarkScanMultiCommand`. On one shared Linux Xeon run, 4/16/64 KiB inputs
+took about 0.32/1.51/5.70 seconds per scan; these are diagnostic observations,
+not latency guarantees. Measure the relevant workload on the deployment host:
+
+```sh
+go test ./guardian/tiered -run '^$' -bench=BenchmarkScanMultiCommand -benchmem
+```
+
+This advisory library does not provide a hard CPU or RSS containment boundary.
+
 ## Network behavior
 
 - `tiered.Engine` and the `guardclaw-scan` CLI make no network calls.

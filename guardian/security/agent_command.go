@@ -523,7 +523,7 @@ func (w *agentWalker) command(words []shWord) *CommandInjectionResult {
 	if i >= len(words) {
 		return nil
 	}
-	if !literalCommandWord(words[i].text) {
+	if words[i].ansiQuoted || !literalCommandWord(words[i].text) {
 		return agentResult("agent_unevaluable_command", CmdCategoryEscape, 1.0)
 	}
 	name, args, _ := splitCommand(words)

@@ -24,6 +24,7 @@ jobs:
         run: |
           node --version
           node --test claude-code-mod/tests/*.test.mjs
+          npm test
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
