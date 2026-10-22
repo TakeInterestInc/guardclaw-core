@@ -87,22 +87,25 @@ func readShellInvocation(name string, args []shWord) shellInvocation {
 	}
 	inline, stdin, noexec, shortSeen, stop := false, false, false, false, false
 	finish := func(index int) shellInvocation {
-		if !downloadWordIsLiteral(args[index]) {
-			if inline {
-				result.inlineCandidate = index
+		if stdin && !inline {
+			// A proved stdin boundary makes all remaining words positional data,
+			// even when expansion can change their count or spelling. Parent
+			// substitutions are still traversed independently by the callers.
+			result.roles[index] = invocationData
+		} else {
+			if !downloadWordIsLiteral(args[index]) {
+				if inline {
+					result.inlineCandidate = index
+				}
+				return unknown(index, "dynamic_source_word")
 			}
-			return unknown(index, "dynamic_source_word")
-		}
-		if inline {
-			result.mode = "inline"
-		} else if !stdin {
-			result.mode = "file"
-		}
-		if !stdin || inline {
+			if inline {
+				result.mode = "inline"
+			} else {
+				result.mode = "file"
+			}
 			result.selected = index
 			result.roles[index] = invocationSource
-		} else {
-			result.roles[index] = invocationData
 		}
 		for j := index + 1; j < len(args); j++ {
 			result.roles[j] = invocationData
