@@ -24,7 +24,6 @@ test('index and worktree reset modes require a human operation', () => {
     'git --config-env fixture.value=PATH checkout -- tracked.txt',
     'git --unknown-global-flag operand reset --merge HEAD',
     'git --config-env',
-
   ]) {
     assert.equal(checkCommand(command)?.rule, 'git_discard_work', command);
     assert.ok(degradedVerdict(command), command);
@@ -35,7 +34,8 @@ test('index and worktree reset modes require a human operation', () => {
     'git -c fixture.value=reset status', 'git -cfixture.value=reset status',
     'git --git-dir repo/.git --work-tree repo status',
     'git -C repo -- reset --soft HEAD',
-]) {
+    'git --version reset --mixed HEAD', 'git --exec-path reset --mixed HEAD',
+  ]) {
     assert.equal(checkCommand(command), undefined, command);
   }
   // Degraded mode's preexisting Git subcommand allowlist still refuses reset.
@@ -58,10 +58,12 @@ test('isolated native Git oracle demonstrates staged-content loss and soft prese
   };
   // Every repository and byte below is a fixed test fixture, never user work.
   // Preserve fixed staged/unstaged bytes outside the repository before reset.
-  for (const [index, { mode, globals = [] }] of [
+  for (const [index, { mode, globals = [], informational = false }] of [
     ...['--merge', '--mer', '--mixed', '--keep', '--soft'].map(mode => ({ mode })),
     { mode: '--mixed', globals: ['--config-env', 'fixture.value=PATH'] },
     { mode: '--merge', globals: ['--config-env=fixture.value=PATH'] },
+    { mode: '--mixed', globals: ['--version'], informational: true },
+    { mode: '--mixed', globals: ['--exec-path'], informational: true },
   ].entries()) {
     const fixture = `${index}-${mode.slice(2)}`;
     const cwd = join(root, fixture); mkdirSync(cwd);
@@ -77,7 +79,7 @@ test('isolated native Git oracle demonstrates staged-content loss and soft prese
     writeFileSync(join(root, fixture + '.staged-backup'), staged);
     writeFileSync(join(root, fixture + '.work-backup'), work);
     git(...globals, 'reset', mode, 'HEAD');
-    if (mode === '--soft') {
+    if (mode === '--soft' || informational) {
       assert.equal(git('show', ':tracked.txt'), staged);
       assert.equal(readFileSync(file, 'utf8'), work);
     } else {
