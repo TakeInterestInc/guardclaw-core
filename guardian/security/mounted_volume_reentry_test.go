@@ -39,6 +39,12 @@ func TestMountedAliasTraversalPreservesVolumeReentry(t *testing.T) {
 			}
 		})
 	}
+	// Preserve the existing physical interpretation after leaving the volume
+	// for the host root, where etc still models a symlink to private/etc.
+	custom := NewProtectedPathChecker([]string{"/private/notes"})
+	if !custom.IsProtected("/Volumes/Boot/etc/../../../../etc/../notes") {
+		t.Fatal("host-root alias exit lost custom physical protection")
+	}
 	withCaseFolding(t, true, func() {
 		if !checker.IsProtected("/vOLUMES/bOOT/eTC/../../../bOOT/eTC/passwd") {
 			t.Fatal("folded volume reentry not protected")
