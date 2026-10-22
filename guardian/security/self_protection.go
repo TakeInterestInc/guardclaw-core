@@ -6,7 +6,9 @@ package security
 import (
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Self-protection analysis.
@@ -98,8 +100,9 @@ func MatchSelfProtection(cmd string) (string, bool) {
 // Shell-style splitting
 
 type shWord struct {
-	text string    // unquoted, unescaped text; a substitution keeps its source
-	subs [][]shCmd // command substitutions inside the word
+	text       string    // unquoted, unescaped text; a substitution keeps its source
+	subs       [][]shCmd // command substitutions inside the word
+	ansiQuoted bool      // command names retain their unevaluable-encoding marker
 }
 
 type shCmd struct {
@@ -118,19 +121,21 @@ type shParser struct {
 // for end of input).
 func (p *shParser) parseList(term byte) []shCmd {
 	var (
-		cmds   []shCmd
-		cur    shCmd
-		w      strings.Builder
-		subs   [][]shCmd
-		inWord bool
-		parens int
+		cmds       []shCmd
+		cur        shCmd
+		w          strings.Builder
+		subs       [][]shCmd
+		inWord     bool
+		ansiQuoted bool
+		parens     int
 	)
 	endWord := func() {
 		if inWord {
-			cur.words = append(cur.words, shWord{text: w.String(), subs: subs})
+			cur.words = append(cur.words, shWord{text: w.String(), subs: subs, ansiQuoted: ansiQuoted})
 			w.Reset()
 			subs = nil
 			inWord = false
+			ansiQuoted = false
 		}
 	}
 	endCmd := func(pipe bool) {
@@ -214,6 +219,10 @@ func (p *shParser) parseList(term byte) []shCmd {
 				}
 				p.i++
 			}
+		case c == '$' && next == '\'':
+			inWord, ansiQuoted = true, true
+			p.i += 2
+			w.WriteString(p.readANSI())
 		case c == '$' && next == '(':
 			inWord = true
 			start := p.i
@@ -234,6 +243,100 @@ func (p *shParser) parseList(term byte) []shCmd {
 	}
 	endCmd(false)
 	return cmds
+}
+
+// readANSI resolves Bash-style $'...' words without running a shell. Bytes
+// after an encoded NUL are discarded until the closing quote, as Bash does;
+// adjoining word fragments still concatenate. Unsupported control escapes
+// fail closed rather than being interpreted as a different command.
+func (p *shParser) readANSI() string {
+	var value strings.Builder
+	truncated := false
+	writeByte := func(c byte) {
+		if c == 0 {
+			truncated = true
+		} else if !truncated {
+			value.WriteByte(c)
+		}
+	}
+	for p.i < len(p.s) {
+		c := p.s[p.i]
+		p.i++
+		if c == '\'' {
+			return value.String()
+		}
+		if c != '\\' || p.i == len(p.s) {
+			writeByte(c)
+			continue
+		}
+		escape := p.s[p.i]
+		p.i++
+		if escape == 'x' || escape == 'u' || escape == 'U' || (escape >= '0' && escape <= '7') {
+			base, limit, start := 16, 2, p.i
+			switch escape {
+			case 'u':
+				limit = 4
+			case 'U':
+				limit = 8
+			case 'x':
+			default:
+				base, limit, start = 8, 3, p.i-1
+			}
+			for p.i < len(p.s) && p.i-start < limit {
+				digit := p.s[p.i]
+				if !((digit >= '0' && digit <= '7') || (base == 16 && ((digit >= '8' && digit <= '9') || (digit >= 'a' && digit <= 'f') || (digit >= 'A' && digit <= 'F')))) {
+					break
+				}
+				p.i++
+			}
+			if start == p.i {
+				writeByte('\\')
+				writeByte(escape)
+				continue
+			}
+			number, _ := strconv.ParseUint(p.s[start:p.i], base, 32)
+			if escape == 'u' || escape == 'U' {
+				if number == 0 {
+					truncated = true
+				} else if !utf8.ValidRune(rune(number)) {
+					p.overflow = true
+					return value.String()
+				} else if !truncated {
+					value.WriteRune(rune(number))
+				}
+			} else {
+				writeByte(byte(number))
+			}
+			continue
+		}
+		switch escape {
+		case 'a':
+			writeByte('\a')
+		case 'b':
+			writeByte('\b')
+		case 'e', 'E':
+			writeByte(27)
+		case 'f':
+			writeByte('\f')
+		case 'n':
+			writeByte('\n')
+		case 'r':
+			writeByte('\r')
+		case 't':
+			writeByte('\t')
+		case 'v':
+			writeByte('\v')
+		case '\\', '\'', '"':
+			writeByte(escape)
+		case 'c':
+			p.overflow = true
+			return value.String()
+		default:
+			writeByte('\\')
+			writeByte(escape)
+		}
+	}
+	return value.String()
 }
 
 func (p *shParser) sub(term byte) []shCmd {
@@ -281,9 +384,15 @@ func (p *shParser) readDouble(w *strings.Builder, subs *[][]shCmd) {
 // Command analysis
 
 type spState struct {
-	vars   map[string]bool // variables holding a guard PID from pgrep/pidof
-	budget int
-	depth  int // nested shell scripts (sh -c, eval, watch); see script
+	vars         map[string]bool // variables holding a guard PID from pgrep/pidof
+	budget       int
+	depth        int // nested shell scripts (sh -c, eval, watch); see script
+	regexResults map[spRegexTarget]bool
+}
+
+type spRegexTarget struct {
+	target      string
+	exact, full bool
 }
 
 // script analyzes a string that another program runs as a shell command
@@ -557,11 +666,11 @@ func (st *spState) command(name string, args []shWord, prev, next *shCmd) (strin
 	case "taskkill":
 		for i := 0; i+1 < len(args); i++ {
 			switch strings.ToLower(args[i].text) {
-			case "/im":
+			case "/im", "-im":
 				if guardNameMatch(args[i+1].text) {
 					return selfProtectTaskkill, true
 				}
-			case "/fi":
+			case "/fi", "-fi":
 				f := strings.Fields(strings.ToLower(args[i+1].text))
 				if len(f) == 3 && f[0] == "imagename" && f[1] == "eq" && guardNameMatch(f[2]) {
 					return selfProtectTaskkill, true
@@ -628,7 +737,7 @@ func (st *spState) procSelects(tool string, args []shWord) bool {
 	case "pidof":
 		argLetters = "o"
 	}
-	var exact, inverse bool
+	var exact, inverse, full bool
 	var targets []string
 	for i := 0; i < len(args); i++ {
 		t := args[i].text
@@ -645,6 +754,8 @@ func (st *spState) procSelects(tool string, args []shWord) bool {
 				exact = true
 			case "inverse":
 				inverse = true
+			case "full":
+				full = true
 			case "regexp":
 				regexMode = true
 			case "signal", "group", "pgroup", "session", "terminal", "euid", "uid", "pidfile",
@@ -680,6 +791,8 @@ func (st *spState) procSelects(tool string, args []shWord) bool {
 					exact = true
 				case f == 'v' && tool != "killall":
 					inverse = true
+				case f == 'f' && tool != "killall":
+					full = true
 				case (f == 'r' || f == 'm') && tool == "killall":
 					regexMode = true
 				case f == 'c' && tool == "killall":
@@ -703,7 +816,7 @@ func (st *spState) procSelects(tool string, args []shWord) bool {
 	for _, t := range targets {
 		var selected bool
 		if regexMode {
-			selected = st.regexSelectsGuard(t, exact)
+			selected = st.regexSelectsGuard(t, exact, full)
 		} else {
 			selected = exactNameMatch(t)
 		}
@@ -751,11 +864,24 @@ var quantifierRun = regexp.MustCompile(`([*+?])[*+?]+`)
 //
 // Targets that do not compile even after collapsing stacked quantifiers, are
 // longer than spMaxTarget, or exceed the per-input budget fail closed.
-func (st *spState) regexSelectsGuard(target string, exact bool) bool {
+func (st *spState) regexSelectsGuard(target string, exact, full bool) bool {
 	st.budget--
 	if st.budget < 0 || len(target) > spMaxTarget {
 		return true
 	}
+	key := spRegexTarget{target: target, exact: exact, full: full}
+	if result, ok := st.regexResults[key]; ok {
+		return result
+	}
+	result := regexTargetSelectsGuard(target, exact, full)
+	if st.regexResults == nil {
+		st.regexResults = make(map[spRegexTarget]bool)
+	}
+	st.regexResults[key] = result
+	return result
+}
+
+func regexTargetSelectsGuard(target string, exact, full bool) bool {
 	// A target that spells a full guard name anywhere (after removing regex
 	// backslash escapes) selects it: pkill matches unanchored, and the
 	// name's own match covers the whole name. This also covers process paths
@@ -772,7 +898,8 @@ func (st *spState) regexSelectsGuard(target string, exact bool) bool {
 	}
 	re, err := regexp.Compile(`(?i)^(?:` + target + suffix)
 	if err != nil {
-		re, err = regexp.Compile(`(?i)^(?:` + quantifierRun.ReplaceAllString(target, "$1") + suffix)
+		target = quantifierRun.ReplaceAllString(target, "$1")
+		re, err = regexp.Compile(`(?i)^(?:` + target + suffix)
 		if err != nil {
 			return true
 		}
@@ -783,7 +910,7 @@ func (st *spState) regexSelectsGuard(target string, exact bool) bool {
 				return true
 			}
 		}
-		return false
+		return full && fullCommandTargetPossible(target, exact)
 	}
 	// For each start position, the longest match from there has the largest
 	// overlap with the guard name of any match from there, so one
@@ -807,7 +934,7 @@ func (st *spState) regexSelectsGuard(target string, exact bool) bool {
 			}
 		}
 	}
-	return false
+	return full && fullCommandTargetPossible(target, exact)
 }
 
 // exactNameMatch is killall/pidof name matching: the whole process name.

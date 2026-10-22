@@ -72,7 +72,7 @@ var DefaultSystemProtectedPaths = []string{
 	"/proc/*/environ",
 	"/proc/*/mem",
 	"/proc/*/maps",
-	"/proc/self/root/**",
+	"/proc/*/root/**",
 
 	// User home — secrets & tokens.
 	"**/.ssh/**",
@@ -129,6 +129,10 @@ var DefaultSystemProtectedPaths = []string{
 // variable rather than a constant so tests can exercise both behaviors on any
 // host.
 var pathCaseInsensitive = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+
+// Keep ambiguous Win32 traversal refusal host-specific: dot/space directory
+// names can be ordinary literal names on Unix. Tests exercise both policies.
+var pathWindowsTraversal = runtime.GOOS == "windows"
 
 // macOSRootAliases are prefixes that resolve to the same file as the path with
 // the prefix replaced. /etc, /var and /tmp are symlinks into /private on macOS,
@@ -262,6 +266,10 @@ type ProtectedPathChecker struct {
 	foldedParts [][]string
 	// withRegistered adds the AddProtectedPatterns registry at match time.
 	withRegistered bool
+	// procRootAliases is enabled by the system policy's procfs root pattern.
+	// Those paths must be refused before lexical .. cleaning: root is a
+	// symlink, so /proc/1/root/../etc still reaches the filesystem root.
+	procRootAliases bool
 }
 
 // NewProtectedPathChecker creates a checker with exactly the given glob
@@ -280,7 +288,13 @@ func NewProtectedPathChecker(patterns []string) *ProtectedPathChecker {
 		parts[i] = strings.Split(p, "/")
 		foldedParts[i] = strings.Split(foldCase(p), "/")
 	}
-	return &ProtectedPathChecker{patterns: clean, parts: parts, foldedParts: foldedParts}
+	checker := &ProtectedPathChecker{patterns: clean, parts: parts, foldedParts: foldedParts}
+	for _, pattern := range clean {
+		if pattern == "/proc/*/root/**" {
+			checker.procRootAliases = true
+		}
+	}
+	return checker
 }
 
 // NewDefaultProtectedPathChecker creates a checker with DefaultProtectedPaths
@@ -324,6 +338,12 @@ func (p *ProtectedPathChecker) IsProtected(path string) bool {
 	if len(path) > maxProtectedPathBytes {
 		return true // fail closed; see maxProtectedPathBytes
 	}
+	if pathWindowsTraversal && ambiguousWindowsTraversal(path) {
+		return true
+	}
+	if p.procRootAliases && referencesProcRoot(path) {
+		return true
+	}
 	clean := cleanPath(path)
 	if clean == "" || clean == "." || clean == "/" {
 		return false
@@ -337,6 +357,27 @@ func (p *ProtectedPathChecker) IsProtected(path string) bool {
 	forms, overflow := pathForms(clean, fold)
 	if overflow {
 		return true // fail closed; see maxProtectedPathForms
+	}
+	// A mounted boot volume's etc/var entries are symlinks. Keep the existing
+	// lexical interpretation and also check traversal after those known aliases
+	// are encountered; cleaning first can erase the mount or symlink prefix.
+	if mounted := mountedAliasTraversal(path, fold); mounted != "" && mounted != clean {
+		alternatives, tooMany := pathForms(mounted, fold)
+		if tooMany {
+			return true
+		}
+		for _, alternative := range alternatives {
+			found := false
+			for _, form := range forms {
+				found = found || form == alternative
+			}
+			if !found {
+				if len(forms) >= maxProtectedPathForms {
+					return true
+				}
+				forms = append(forms, alternative)
+			}
+		}
 	}
 
 	own := p.parts
@@ -356,6 +397,55 @@ func (p *ProtectedPathChecker) IsProtected(path string) bool {
 		}
 		for _, pattern := range extra {
 			if matchParts(strings.Split(pattern, "/"), formParts) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Dot/space-only Windows components have platform-dependent traversal and
+// trimming semantics. Do not reinterpret them as an ordinary current-directory
+// component. Normal literal . and .. components retain their usual behavior.
+func ambiguousWindowsTraversal(path string) bool {
+	for _, component := range strings.Split(filepath.ToSlash(path), "/") {
+		if component == "" || component == "." || component == ".." {
+			continue
+		}
+		if index := strings.IndexByte(component, ':'); index >= 0 && !isDriveLetter(component) {
+			component = component[:index]
+		}
+		if strings.Trim(component, ". ") == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// referencesProcRoot recognizes a procfs root alias as soon as it is reached,
+// before a later parent segment can erase it. It deliberately does not read
+// procfs or follow arbitrary symlinks. Only the system-pattern policy opts in.
+func referencesProcRoot(path string) bool {
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	if !strings.HasPrefix(path, "/") {
+		return false
+	}
+	var prefix []string
+	for _, segment := range strings.Split(path, "/") {
+		segment = windowsSegment(segment)
+		switch segment {
+		case "", ".":
+			continue
+		case "..":
+			if len(prefix) > 0 {
+				prefix = prefix[:len(prefix)-1]
+			}
+		default:
+			if pathCaseInsensitive {
+				segment = foldCase(segment)
+			}
+			prefix = append(prefix, segment)
+			if len(prefix) == 3 && prefix[0] == "proc" && prefix[2] == "root" {
 				return true
 			}
 		}
@@ -518,7 +608,8 @@ func canonicalRoot(p string, fold bool) string {
 }
 
 // volumesPrivate strips a /Volumes/<name> prefix when what follows is
-// /private/etc/ or /private/var/.
+// /private/etc/, /private/var/, /etc/ or /var/. The latter two are
+// symlinks to the private directories on the boot volume.
 func volumesPrivate(p string, fold bool) (string, bool) {
 	prefix := "/Volumes/"
 	if fold {
@@ -533,10 +624,55 @@ func volumesPrivate(p string, fold bool) (string, bool) {
 		return p, false
 	}
 	rest := after[slash:]
-	if strings.HasPrefix(rest, "/private/etc/") || strings.HasPrefix(rest, "/private/var/") {
+	if strings.HasPrefix(rest, "/private/etc/") || strings.HasPrefix(rest, "/private/var/") ||
+		strings.HasPrefix(rest, "/etc/") || strings.HasPrefix(rest, "/var/") {
 		return rest, true
 	}
 	return p, false
+}
+
+// mountedAliasTraversal supplies an additional form only for the already
+// supported /Volumes/<boot>/etc|var and private/etc|var aliases. It resolves
+// their known symlink shape before subsequent parent components, without
+// replacing the ordinary lexical form or guessing arbitrary disk symlinks.
+func mountedAliasTraversal(path string, fold bool) string {
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	if !strings.HasPrefix(path, "/") {
+		return ""
+	}
+	volumeMarker := "Volumes"
+	if fold {
+		volumeMarker = "volumes"
+	}
+	var stack []string
+	mounted := false
+	for _, segment := range strings.Split(path, "/") {
+		segment = windowsSegment(segment)
+		if fold {
+			segment = foldCase(segment)
+		}
+		switch segment {
+		case "", ".":
+			continue
+		case "..":
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+		default:
+			stack = append(stack, segment)
+			if len(stack) == 3 && stack[0] == volumeMarker && (segment == "etc" || segment == "var") ||
+				len(stack) == 4 && stack[0] == volumeMarker && stack[2] == "private" && (segment == "etc" || segment == "var") {
+				stack = []string{"private", segment}
+				mounted = true
+			} else if mounted && len(stack) == 1 && (segment == "etc" || segment == "var" || segment == "tmp") {
+				stack = []string{"private", segment}
+			}
+		}
+	}
+	if !mounted {
+		return ""
+	}
+	return canonicalRoot("/"+strings.Join(stack, "/"), fold)
 }
 
 // macOSCase returns the on-disk spelling of a lowercase alias prefix.
@@ -581,6 +717,11 @@ func pathForms(clean string, fold bool) (forms []string, overflow bool) {
 		}
 	} else {
 		rooted = "/" + clean
+	}
+	// Cleaning removes the trailing slash, so the directory itself needs a
+	// terminal-component form as well as the child-path suffix below.
+	if strings.HasSuffix(rooted, "/.guardclaw") {
+		add(".guardclaw")
 	}
 
 	suffixes := configCriticalSuffixes

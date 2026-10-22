@@ -80,7 +80,7 @@ var CommandInjectionPatterns = []CommandInjectionPattern{
 	// ==========================================
 	// CATEGORY: Pipe Injection (20 patterns)
 	// ==========================================
-	{regexp.MustCompile(`\|\s*(sh|bash|zsh|csh|ksh|tcsh|fish)`), CmdCategoryPipe, 1.0, 0.99, "pipe_shell", "| sh"},
+	{regexp.MustCompile(`\|\s*(sh|bash|zsh|csh|ksh|tcsh|fish)(?:[\s;&|<>]|$)`), CmdCategoryPipe, 1.0, 0.99, "pipe_shell", "| sh"},
 	{regexp.MustCompile(`\|\s*(python|python3|perl|ruby|php|node)`), CmdCategoryPipe, 1.0, 0.98, "pipe_interpreter", "| python"},
 	{regexp.MustCompile(`\|\s*base64\s+-d`), CmdCategoryPipe, 1.0, 0.98, "pipe_base64_decode", "| base64 -d"},
 	{regexp.MustCompile(`\|\s*xxd\s+-r`), CmdCategoryPipe, 1.0, 0.95, "pipe_xxd", "| xxd -r"},
@@ -536,7 +536,7 @@ func selfProtectKillPattern() string {
 
 func selfProtectTaskkillPattern() string {
 	n := guardServiceName()
-	return `(?i)\btaskkill\b` + seg + `/(?:IM|FI)\s+['"]?(?:imagename\s+eq\s+)?` + n +
+	return `(?i)\btaskkill\b` + seg + `[-/](?:IM|FI)\s+['"]?(?:imagename\s+eq\s+)?` + n +
 		`|\bStop-Process\b` + seg + n
 }
 
