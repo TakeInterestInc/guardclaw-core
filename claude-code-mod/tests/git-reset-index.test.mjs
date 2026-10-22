@@ -17,11 +17,25 @@ test('index and worktree reset modes require a human operation', () => {
     'git -C repo reset --merge HEAD', 'sudo git reset --merge HEAD',
     'git reset --soft "$MODE"', 'git reset --soft {--hard,HEAD}',
     'git reset --soft HEAD -- tracked.txt',
+    'git --config-env fixture.value=PATH reset',
+    'git --config-env=fixture.value=PATH reset --mixed HEAD',
+    'git -C repo --config-env fixture.value=PATH reset --merge HEAD',
+    'git --config-env fixture.value=PATH -c advice.detachedHead=false reset --keep HEAD',
+    'git --config-env fixture.value=PATH checkout -- tracked.txt',
+    'git --unknown-global-flag operand reset --merge HEAD',
+    'git --config-env',
+
   ]) {
     assert.equal(checkCommand(command)?.rule, 'git_discard_work', command);
     assert.ok(degradedVerdict(command), command);
   }
-  for (const command of ['git reset --soft HEAD~1', 'git reset -q --soft HEAD', 'git reset -h', 'git status', 'git switch dev']) {
+  for (const command of ['git reset --soft HEAD~1', 'git reset -q --soft HEAD', 'git reset -h', 'git status', 'git switch dev',
+    'git --config-env fixture.value=PATH status',
+    'git --config-env=fixture.value=PATH reset --soft HEAD~1',
+    'git -c fixture.value=reset status', 'git -cfixture.value=reset status',
+    'git --git-dir repo/.git --work-tree repo status',
+    'git -C repo -- reset --soft HEAD',
+]) {
     assert.equal(checkCommand(command), undefined, command);
   }
   // Degraded mode's preexisting Git subcommand allowlist still refuses reset.
@@ -44,8 +58,13 @@ test('isolated native Git oracle demonstrates staged-content loss and soft prese
   };
   // Every repository and byte below is a fixed test fixture, never user work.
   // Preserve fixed staged/unstaged bytes outside the repository before reset.
-  for (const mode of ['--merge', '--mer', '--mixed', '--keep', '--soft']) {
-    const cwd = join(root, mode.slice(2)); mkdirSync(cwd);
+  for (const [index, { mode, globals = [] }] of [
+    ...['--merge', '--mer', '--mixed', '--keep', '--soft'].map(mode => ({ mode })),
+    { mode: '--mixed', globals: ['--config-env', 'fixture.value=PATH'] },
+    { mode: '--merge', globals: ['--config-env=fixture.value=PATH'] },
+  ].entries()) {
+    const fixture = `${index}-${mode.slice(2)}`;
+    const cwd = join(root, fixture); mkdirSync(cwd);
     const git = (...args) => execFileSync('git', ['-c', 'user.name=Fixed Fixture', '-c', 'user.email=fixture@example.invalid', ...args], { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     const file = join(cwd, 'tracked.txt');
     git('init', '-q'); writeFileSync(file, 'fixed base\n'); git('add', 'tracked.txt'); git('commit', '-qm', 'fixed base');
@@ -55,9 +74,9 @@ test('isolated native Git oracle demonstrates staged-content loss and soft prese
     // Keep merge's staged-only case untouched after add: even an identical
     // rewrite can make its index stat stale and legitimately abort --merge.
     if (work !== staged) writeFileSync(file, work);
-    writeFileSync(join(root, mode.slice(2) + '.staged-backup'), staged);
-    writeFileSync(join(root, mode.slice(2) + '.work-backup'), work);
-    git('reset', mode, 'HEAD');
+    writeFileSync(join(root, fixture + '.staged-backup'), staged);
+    writeFileSync(join(root, fixture + '.work-backup'), work);
+    git(...globals, 'reset', mode, 'HEAD');
     if (mode === '--soft') {
       assert.equal(git('show', ':tracked.txt'), staged);
       assert.equal(readFileSync(file, 'utf8'), work);
