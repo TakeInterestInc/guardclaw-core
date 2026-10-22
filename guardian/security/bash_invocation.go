@@ -24,11 +24,16 @@ func readBashInvocation(args []shWord) bashInvocation {
 			return bashInvocation{}
 		}
 		if t == "--" || t == "-" {
-			if inline {
+			// Both terminate startup option parsing. A following word can be
+			// the -c program or file, even when it starts with '-' or '+'.
+			if i+1 < len(args) {
+				if inline {
+					result.mode, result.selected = "inline", args[i+1]
+				} else if !stdin {
+					result.mode, result.selected = "file", args[i+1]
+				}
+			} else if inline {
 				return bashInvocation{}
-			}
-			if t == "--" && !stdin && i+1 < len(args) {
-				result.mode, result.selected = "file", args[i+1]
 			}
 			return result
 		}
@@ -97,14 +102,12 @@ func readBashInvocation(args []shWord) bashInvocation {
 				return bashInvocation{}
 			}
 		}
-		// -c selects the next argument after all operands of this option group.
-		if inline {
-			if i+1 >= len(args) {
-				return bashInvocation{}
-			}
-			result.mode, result.selected = "inline", args[i+1]
-			return result
-		}
+		// -c enables inline mode but does not end startup option parsing.
+		// Later options (including +n) apply until a non-option program or
+		// explicit terminator selects the actual command operand.
+	}
+	if inline {
+		return bashInvocation{}
 	}
 	return result
 }
