@@ -3,7 +3,10 @@
 
 package security
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRsyncForwardedDeletionBoundary(t *testing.T) {
 	for _, input := range []string{
@@ -15,6 +18,8 @@ func TestRsyncForwardedDeletionBoundary(t *testing.T) {
 		"rsync --remot=--remove-source-files host:/important dist/",
 		"rsync -M--remov host:/important dist/",
 		"rsync -M--delete src/ host:/important",
+		"rsync --old-args -M'--info=stats2 --remove-source-files' host:/important dist/",
+		"rsync -M'--info=stats2 --remove-source-files' host:/important dist/",
 		"sudo rsync -M--remove-source-files host:/important dist/",
 		"bash -c 'rsync -M--remove-source-files host:/important dist/'",
 	} {
@@ -33,6 +38,8 @@ func TestRsyncForwardedDeletionBoundary(t *testing.T) {
 		"rsync -M--remove-source-files src/file dist/",
 		"rsync -M--delete src/ dist/",
 		"rsync --include=--remote-option=--remove-source-files host:src/ dist/",
+		"rsync -- -M--remove-source-files host:src/ dist/",
+		"rsync -M-- -M--remove-source-files host:src/ dist/",
 	} {
 		if result := CheckCommandInjection(input); result.Detected {
 			t.Errorf("strict refused ordinary forwarded options %q (%s)", input, result.PatternName)
@@ -40,5 +47,12 @@ func TestRsyncForwardedDeletionBoundary(t *testing.T) {
 		if result := CheckAgentCommand(input); result.Detected {
 			t.Errorf("agent refused ordinary forwarded options %q (%s)", input, result.PatternName)
 		}
+	}
+}
+
+func TestRsyncForwardedOptionsBounded(t *testing.T) {
+	options := parseRsyncDeletionOptions([]shWord{{text: strings.Repeat("-M", shMaxDepth) + "--info=stats2"}}, 0)
+	if !options.unknown || !options.deleteDestination || !options.deleteSources {
+		t.Fatal("excessive forwarded option nesting did not fail closed")
 	}
 }

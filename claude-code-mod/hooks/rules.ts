@@ -182,16 +182,23 @@ export function protectedRead(path: string, home?: string, realPath?: string): V
 const RSYNC_VALUE_OPTIONS = new Set(`rsh rsync-path include exclude filter include-from exclude-from files-from password-file log-file log-file-format out-format backup-dir suffix temp-dir partial-dir compare-dest copy-dest link-dest chmod chown usermap groupmap remote-option address port sockopts bwlimit stop-after stop-at timeout contimeout max-delete max-size min-size block-size modify-window checksum-seed checksum-choice compress-choice compress-level skip-compress iconv info debug outbuf`.split(' '))
 const RSYNC_FLAG_OPTIONS = new Set(`archive recursive relative no-relative times perms owner group devices specials hard-links links copy-links safe-links copy-unsafe-links copy-dirlinks keep-dirlinks verbose quiet checksum compress progress partial inplace append append-verify existing ignore-existing ignore-errors force prune-empty-dirs numeric-ids dry-run update backup whole-file one-file-system itemize-changes stats human-readable protect-args secluded-args old-args msgs2stderr blocking-io non-blocking-io fsync mkpath omit-dir-times omit-link-times atimes open-noatime crtimes executability super fake-super no-super acls xattrs no-delete`.split(' '))
 
-function rsyncDeletionRefusal(args: string[]): Verdict | undefined {
-  args = args.flatMap((arg, i) => {
-    const before = args[i - 1] ?? ''
-    if (/^\d*[<>][<>&|]*$/.test(before)) return []
-    const at = arg.search(/[<>]/)
-    if (at < 0 || arg.includes('<(') || arg.includes('>(')) return [arg]
-    const prefix = arg.slice(0, at)
-    return prefix && !/^\d+$/.test(prefix) ? [prefix] : []
-  })
+type RsyncDeletionOptions = { operands: string[]; destination: boolean; sources: boolean; unknown: boolean }
+
+function parseRsyncDeletionOptions(args: string[], depth = 0): RsyncDeletionOptions {
+  const modern = parseRsyncDeletionOptionsMode(args, depth, false)
+  const legacy = parseRsyncDeletionOptionsMode(args, depth, true)
+  modern.destination ||= legacy.destination
+  modern.sources ||= legacy.sources
+  modern.unknown ||= legacy.unknown
+  return modern
+}
+
+// Version-unattested input needs both modern and legacy/--old-args argv
+// interpretations. Each is a separate bounded walk, with no recursive fork.
+function parseRsyncDeletionOptionsMode(args: string[], depth: number, legacy: boolean): RsyncDeletionOptions {
+  if (depth >= 16) return { operands: [], destination: true, sources: true, unknown: true }
   const operands: string[] = []
+  const forwarded: string[] = []
   let destination = false, sources = false, unknown = false, endOptions = false
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? ''
@@ -200,6 +207,14 @@ function rsyncDeletionRefusal(args: string[]): Verdict | undefined {
       const name = arg.slice(2).split('=')[0] ?? ''
       if (name === 'del' || name.startsWith('delete') || (name.length >= 3 && 'delete'.startsWith(name))) destination = true
       else if (name.startsWith('remove-source') || name.startsWith('remove-sent') || (name.length >= 'remov'.length && 'remove-source-files'.startsWith(name))) sources = true
+      else if (name.length >= 'remot'.length && 'remote-option'.startsWith(name)) {
+        let value = arg.slice(arg.indexOf('=') + 1)
+        if (!arg.includes('=')) {
+          if (++i >= args.length) { unknown = true; continue }
+          value = args[i] ?? ''
+        }
+        forwarded.push(value)
+      }
       else if (RSYNC_VALUE_OPTIONS.has(name)) {
         if (!arg.includes('=') && ++i >= args.length) unknown = true
       } else if (!arg.includes('=') && !RSYNC_FLAG_OPTIONS.has(name)) unknown = true
@@ -208,7 +223,16 @@ function rsyncDeletionRefusal(args: string[]): Verdict | undefined {
     if (!endOptions && arg.startsWith('-') && arg.length > 1) {
       for (let j = 1; j < arg.length; j++) {
         const ch = arg[j] ?? ''
-        if ('efBMT@'.includes(ch)) {
+        if (ch === 'M') {
+          let value = arg.slice(j + 1)
+          if (value === '') {
+            if (++i >= args.length) { unknown = true; break }
+            value = args[i] ?? ''
+          }
+          forwarded.push(value)
+          break
+        }
+        if ('efBT@'.includes(ch)) {
           if (j === arg.length - 1 && ++i >= args.length) unknown = true
           break
         }
@@ -218,6 +242,26 @@ function rsyncDeletionRefusal(args: string[]): Verdict | undefined {
     }
     operands.push(arg)
   }
+  if (forwarded.length) {
+    const remoteArgs = legacy ? forwarded.flatMap(arg => arg.split(/[ \t\r\n]+/).filter(Boolean)) : forwarded
+    const remote = parseRsyncDeletionOptionsMode(remoteArgs, depth + 1, legacy)
+    destination ||= remote.destination
+    sources ||= remote.sources
+    unknown ||= remote.unknown
+  }
+  return { operands, destination, sources, unknown }
+}
+
+function rsyncDeletionRefusal(args: string[]): Verdict | undefined {
+  args = args.flatMap((arg, i) => {
+    const before = args[i - 1] ?? ''
+    if (/^\d*[<>][<>&|]*$/.test(before)) return []
+    const at = arg.search(/[<>]/)
+    if (at < 0 || arg.includes('<(') || arg.includes('>(')) return [arg]
+    const prefix = arg.slice(0, at)
+    return prefix && !/^\d+$/.test(prefix) ? [prefix] : []
+  })
+  const { operands, destination, sources, unknown } = parseRsyncDeletionOptions(args)
   if (!destination && !sources) return undefined
   const plain = (path: string) => isPlainRelPath(path) && !path.split('/').includes('.git') && !protectedWrite(path)
   if (unknown || operands.length < 2 || (destination && !plain(operands[operands.length - 1] ?? '')) || (sources && operands.slice(0, -1).some(p => !plain(p)))) {
