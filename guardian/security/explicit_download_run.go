@@ -13,45 +13,36 @@ import (
 // arbitrary interpreter loaders, or effects from an earlier invocation.
 func matchExplicitDownloadRun(input string) bool {
 	p := &shParser{s: input}
-	state := &explicitDownloadRun{files: make(map[string]bool)}
+	state := &explicitDownloadRun{context: &downloadWrites{files: make(map[downloadIdentity]bool)}}
 	state.list(p.parseList(0), 0)
-	return state.bad
+	return state.context.bad
 }
 
+// Writes persist independently of process location. Opaque location tokens do
+// not infer equivalence after cd or root changes; see the documented #14 limits.
+type downloadIdentity struct {
+	root, cwd uint64
+	file      string
+}
+type downloadWrites struct {
+	files map[downloadIdentity]bool
+	next  uint64
+	bad   bool
+}
 type explicitDownloadRun struct {
-	files      map[string]bool
-	parent     *explicitDownloadRun // inherited identities without copying the map
-	bad        bool
-	cwdChanged bool
+	context   *downloadWrites
+	root, cwd uint64
 }
 
-func (s *explicitDownloadRun) changeDirectory() {
-	s.cwdChanged = true
-	for file := range s.files {
-		if !path.IsAbs(file) {
-			delete(s.files, file)
-		}
+func (s *explicitDownloadRun) token() uint64                    { s.context.next++; return s.context.next }
+func (s *explicitDownloadRun) changeDirectory()                 { s.cwd = s.token() }
+func (s *explicitDownloadRun) childState() *explicitDownloadRun { child := *s; return &child }
+func (s *explicitDownloadRun) identity(file string) downloadIdentity {
+	key := downloadIdentity{root: s.root, cwd: s.cwd, file: file}
+	if path.IsAbs(file) {
+		key.cwd = 0
 	}
-}
-
-func (s *explicitDownloadRun) childState(inherit bool) *explicitDownloadRun {
-	child := &explicitDownloadRun{files: make(map[string]bool)}
-	if inherit {
-		child.parent = s
-	}
-	return child
-}
-
-func (s *explicitDownloadRun) absorbChild(child *explicitDownloadRun, propagate bool) {
-	s.bad = s.bad || child.bad
-	if !propagate {
-		return
-	}
-	for file := range child.files {
-		if !child.cwdChanged || path.IsAbs(file) {
-			s.files[file] = true
-		}
-	}
+	return key
 }
 
 // Cooked metacharacters can be literal when quoted or escaped. Consult the
@@ -126,15 +117,7 @@ func (s *explicitDownloadRun) matches(word shWord) bool {
 	if !ok {
 		return false
 	}
-	for scope := s; scope != nil; scope = scope.parent {
-		if scope.files[file] {
-			return true
-		}
-		if scope.cwdChanged && !path.IsAbs(file) {
-			return false
-		}
-	}
-	return false
+	return s.context.files[s.identity(file)]
 }
 
 func (s *explicitDownloadRun) list(commands []shCmd, depth int) {
@@ -144,9 +127,8 @@ func (s *explicitDownloadRun) list(commands []shCmd, depth int) {
 	for _, command := range commands {
 		for _, word := range command.words {
 			for _, sub := range word.subs {
-				child := s.childState(true)
+				child := s.childState()
 				child.list(sub, depth+1)
-				s.absorbChild(child, true)
 			}
 		}
 		s.words(command.words, depth)
@@ -169,12 +151,14 @@ func (s *explicitDownloadRun) words(words []shWord, depth int) {
 	}
 	if wrapperCwd {
 		// A cwd-only child shares absolute identities in both directions. A
-		// changed root isolates both inputs and outputs. Relative identities
-		// are invalidated by the child's cwd effect.
-		child := s.childState(!wrapperRoot)
+		// changed root allocates a separate namespace; prior writes remain
+		// in the persistent ledger for their original location.
+		child := s.childState()
+		if wrapperRoot {
+			child.root = child.token()
+		}
 		child.changeDirectory()
 		child.words(words[i:], depth+1)
-		s.absorbChild(child, !wrapperRoot)
 		return
 	}
 	name, args, _ := splitCommand(words)
@@ -183,7 +167,7 @@ func (s *explicitDownloadRun) words(words []shWord, depth int) {
 		return
 	}
 	if strings.Contains(words[i].text, "/") && s.matches(words[i]) {
-		s.bad = true
+		s.context.bad = true
 	}
 	if strings.ContainsAny(words[i].text, "/\\") {
 		switch name {
@@ -198,18 +182,22 @@ func (s *explicitDownloadRun) words(words []shWord, depth int) {
 	}
 	fileArgs := rsyncWithoutRedirects(args)
 	if name == "." || name == "source" {
-		if len(fileArgs) > 0 && s.matches(fileArgs[0]) {
-			s.bad = true
+		terminated := len(fileArgs) > 0 && fileArgs[0].text == "--"
+		if terminated {
+			fileArgs = fileArgs[1:]
+		}
+		if len(fileArgs) > 0 && (terminated || !strings.HasPrefix(fileArgs[0].text, "-")) && s.matches(fileArgs[0]) {
+			s.context.bad = true
 		}
 	} else if name == "sh" || name == "bash" || name == "dash" || name == "ksh" || name == "zsh" || name == "ash" {
 		if file, ok := literalShellFile(name, fileArgs); ok && s.matches(file) {
-			s.bad = true
+			s.context.bad = true
 		}
 	}
 	if name == "curl" || name == "wget" {
 		for _, file := range explicitFetchOutputs(name, fileArgs) {
 			if clean, ok := literalDownloadPath(file); ok {
-				s.files[clean] = true
+				s.context.files[s.identity(clean)] = true
 			}
 		}
 	}
@@ -219,18 +207,16 @@ func (s *explicitDownloadRun) words(words []shWord, depth int) {
 		if name == "eval" {
 			s.list(commands, depth+1)
 		} else {
-			child := s.childState(true)
+			child := s.childState()
 			child.list(commands, depth+1)
-			s.absorbChild(child, true)
 		}
 	}
 	// find's expression/value grammar and -execdir working directory need a
 	// separate model. Do not infer provenance inside its command templates.
 	if name != "find" {
 		for _, inner := range innerCommands(name, args) {
-			child := s.childState(true)
+			child := s.childState()
 			child.words(inner, depth+1)
-			s.absorbChild(child, true)
 		}
 	}
 }
@@ -239,6 +225,10 @@ func (s *explicitDownloadRun) words(words []shWord, depth int) {
 // Inline programs are opened by innerScripts; -s reads stdin. Other startup
 // files and shell-specific option forms remain outside this narrow boundary.
 func literalShellFile(name string, args []shWord) (shWord, bool) {
+	if name == "bash" {
+		invocation := readBashInvocation(args)
+		return invocation.selected, invocation.known && invocation.mode == "file" && !invocation.noexec
+	}
 	if shellSyntaxOnly(name, args) {
 		return shWord{}, false
 	}
@@ -308,7 +298,8 @@ var literalWgetValues = strings.Fields("output-file append-output directory-pref
 // Redirections stripped by the shared helper do not become option operands;
 // unquoted residual redirection words are outside this literal grammar.
 func explicitFetchOutputs(name string, args []shWord) []shWord {
-	var files []shWord
+	var outputs []shWord
+	urls := 0
 	flagOptions, valueOptions := literalCurlFlags, literalCurlValues
 	valueLetters, plainLetters, outputLetter := "HduAXxUebFTr", "fsSLqvIk", byte('o')
 	outputName := "output"
@@ -317,68 +308,97 @@ func explicitFetchOutputs(name string, args []shWord) []shWord {
 		valueLetters, plainLetters, outputLetter = "oPU", "qvcNS", 'O'
 		outputName = "output-document"
 	}
+	addURL := func(word shWord) bool {
+		if word.text == "" || !downloadWordIsLiteral(word) {
+			return false
+		}
+		// Shell quotes do not disable curl's own URL glob interpreter.
+		if name == "curl" && strings.ContainsAny(word.text, "{}[]") {
+			return false
+		}
+		urls++
+		return true
+	}
+	positional := false
 	for i := 0; i < len(args); i++ {
-		t := args[i].text
-		if t == "--" {
-			break
+		word, t := args[i], args[i].text
+		if !downloadWordIsLiteral(word) {
+			return nil
+		}
+		if !positional && t == "--" {
+			positional = true
+			continue
+		}
+		if positional || !strings.HasPrefix(t, "-") || t == "-" {
+			if !addURL(word) {
+				return nil
+			}
+			continue
 		}
 		if strings.HasPrefix(t, "--") {
 			key, value, attached := strings.Cut(t[2:], "=")
-			switch {
-			case key == outputName:
+			if key == outputName || (key == "url" && name == "curl") || rsyncContains(valueOptions, key) {
 				if !attached {
 					i++
 					if i >= len(args) {
 						return nil
 					}
-					value = args[i].text
+					word = args[i]
+					value = word.text
 				}
-				word := args[i]
-				word.text = value
-				files = append(files, word)
-			case rsyncContains(valueOptions, key):
-				if !attached {
-					i++
-					if i >= len(args) {
-						return nil
-					}
-				}
-			case rsyncContains(flagOptions, key) && !attached:
-			default:
-				return nil
-			}
-		} else if strings.HasPrefix(t, "-") && t != "-" {
-			for j := 1; j < len(t); j++ {
-				switch {
-				case t[j] == outputLetter:
-					value := t[j+1:]
-					if value == "" {
-						i++
-						if i >= len(args) {
-							return nil
-						}
-						value = args[i].text
-					}
-					word := args[i]
-					word.text = value
-					files = append(files, word)
-					j = len(t)
-				case strings.ContainsRune(valueLetters, rune(t[j])):
-					if j == len(t)-1 {
-						i++
-						if i >= len(args) {
-							return nil
-						}
-					}
-					j = len(t)
-				case strings.ContainsRune(plainLetters, rune(t[j])):
-				default:
+				if !downloadWordIsLiteral(word) {
 					return nil
 				}
+				word.text = value
+				if key == outputName {
+					outputs = append(outputs, word)
+				}
+				if key == "url" && name == "curl" && !addURL(word) {
+					return nil
+				}
+			} else if !rsyncContains(flagOptions, key) || attached {
+				return nil
+			}
+			continue
+		}
+		for j := 1; j < len(t); j++ {
+			if t[j] == outputLetter || strings.ContainsRune(valueLetters, rune(t[j])) {
+				output := t[j] == outputLetter
+				value := t[j+1:]
+				if value == "" {
+					i++
+					if i >= len(args) {
+						return nil
+					}
+					word = args[i]
+					value = word.text
+				}
+				if !downloadWordIsLiteral(word) {
+					return nil
+				}
+				word.text = value
+				if output {
+					outputs = append(outputs, word)
+				}
+				break
+			}
+			if !strings.ContainsRune(plainLetters, rune(t[j])) {
+				return nil
 			}
 		}
 	}
-	return files
+	if urls != 1 || len(outputs) == 0 {
+		return nil
+	}
+	if name == "curl" && len(outputs) != 1 {
+		return nil
+	}
+	// Wget's -O is a single effective output; repeated selection is last-wins.
+	output := outputs[len(outputs)-1]
+	if _, ok := literalDownloadPath(output); !ok {
+		return nil
+	}
+	return []shWord{output}
 }
 
 func explicitDownloadRunResult() *CommandInjectionResult {

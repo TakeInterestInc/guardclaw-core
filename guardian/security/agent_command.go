@@ -262,55 +262,25 @@ func visitWords(words []shWord, depth int, fn func(name string, args []shWord)) 
 // program and its positional arguments are not more shell options.
 func shellSyntaxOnly(name string, args []shWord) bool {
 	if name != "bash" {
-		return false // other shells need their own native option oracle
+		return false
 	}
-	noexec := false
-	for i := 0; i < len(args); i++ {
-		t := args[i].text
-		if t == "--" || t == "-" || len(t) < 2 || (t[0] != '-' && t[0] != '+') {
-			break
-		}
-		if t == "--rcfile" || t == "--init-file" {
-			i++
-			continue
-		}
-		if t == "-O" || t == "+O" {
-			i++
-			continue
-		}
-		if t == "-o" || t == "+o" {
-			if i+1 < len(args) {
-				i++
-				if args[i].text == "noexec" {
-					noexec = t[0] == '-'
-				}
-			}
-			continue
-		}
-		if t == "--command" || strings.HasPrefix(t, "--command=") {
-			break
-		}
-		if strings.HasPrefix(t, "--") {
-			if t == "--norc" || t == "--noprofile" || t == "--posix" || t == "--login" || t == "--restricted" {
-				continue
-			}
-			return false // unknown options might consume a later -n as data
-		}
-		if strings.Trim(t[1:], "efnuvxilprc") != "" {
-			return false
-		}
-		if strings.ContainsRune(t[1:], 'n') {
-			noexec = t[0] == '-'
-		}
-		if strings.ContainsRune(t[1:], 'c') {
-			break
-		}
-	}
-	return noexec
+	invocation := readBashInvocation(args)
+	return invocation.known && invocation.noexec
 }
 
 // innerScripts are the strings a command runs as shell code.
 func innerScripts(name string, args []shWord) []string {
+	if name == "bash" {
+		invocation := readBashInvocation(args)
+		if invocation.known {
+			if invocation.mode == "inline" && !invocation.noexec {
+				return []string{invocation.selected.text}
+			}
+			return nil
+		}
+		// Unknown grammar retains the previous conservative inline candidate scan.
+	}
+
 	if shellSyntaxOnly(name, args) {
 		return nil
 	}

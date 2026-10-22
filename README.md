@@ -192,11 +192,22 @@ other shells receive no syntax-only exemption.
 This is a bounded lexical candidate check, not proof of filesystem identity or
 complete download provenance. It uses the existing parser and known wrapper/
 option grammar; unsupported options discard that fetch's inferred outputs.
-Directory changes are identified from parsed commands and consumed wrapper
-options, rather than inert argument text. Known Bash startup-option operands
-are consumed before selecting its script. Actual parent directory changes
-invalidate prior relative identities; they cannot erase execution already
-identified. Wrapper and inner-shell directory effects are scoped separately.
+Candidate writes persist in a shared ledger keyed by opaque filesystem-root
+and current-directory tokens. Represented child shells and substitutions copy
+their location while sharing prior writes, so a later child `cd` cannot erase a
+write made in the parent's directory. Directory effects assign new tokens;
+separate changes never imply equivalent locations. Cwd-only wrappers share
+absolute candidates; changed-root wrappers isolate them. Detection is monotonic.
+One bounded typed Bash startup reader selects its inline/file operand and
+syntax-only mode; unknown grammar retains conservative inline analysis without
+a noexec exemption. Source commands consume a supported `--` terminator.
+Curl requires one literal URL and one explicit output; its own URL glob syntax
+is excluded even inside shell quotes. Wget's supported single-URL `-O` form
+uses its last output selection. Stdout outputs infer no file. This association
+models a candidate transfer, not successful network writes or command success.
+State grows with visited supported fetches and directory effects, with existing
+child-depth limits; the API does not impose an input byte cap. Directory option
+modes, including `pushd -n`/`popd -n`, are not precisely modeled.
 Find command templates, full shell control-flow/cwd resolution,
 remote/config-selected names, residual
 operator-bearing words, tee flow, modules/other interpreters, filesystem and
