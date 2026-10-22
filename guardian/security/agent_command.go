@@ -138,6 +138,9 @@ func agentMutates(name string, args []shWord) bool {
 }
 
 func (w *agentWalker) strictLine(s string) *CommandInjectionResult {
+	if matchRsyncDeletion(s) {
+		return rsyncDeletionResult()
+	}
 	if name, ok := MatchSelfProtection(s); ok {
 		return agentResult(name, CmdCategoryDestructive, 1.0)
 	}

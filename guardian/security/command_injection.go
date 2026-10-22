@@ -359,6 +359,9 @@ func CheckCommandInjection(input string) *CommandInjectionResult {
 	if input == "" {
 		return result
 	}
+	if matchRsyncDeletion(input) {
+		return rsyncDeletionResult()
+	}
 
 	var indicators []string
 

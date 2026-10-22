@@ -118,10 +118,10 @@ describe('parity in degraded mode (scanner missing)', () => {
     'echo hello world', 'date', 'whoami', 'env', 'diff a.txt b.txt', 'stat go.mod', 'file go.mod', 'tree',
     'head -5 README.md', 'tail -f build.log', 'wc -l main.go',
     'git diff', 'git show HEAD', 'git branch', 'git fetch', 'git pull', 'git add main.go',
-    'git commit -m "fix the parser"', 'git stash list', 'git checkout main', 'git switch dev',
-    'git restore main.go', 'git rev-parse HEAD', 'git remote -v',
+    'git commit -m "fix the parser"', 'git stash list', 'git switch main', 'git switch dev',
+    'git rev-parse HEAD', 'git remote -v',
     'go build ./...', 'go vet ./...', 'go run ./cmd/tool',
-    'npm ci --ignore-scripts', 'npm install --ignore-scripts', 'npm run build', 'npx tsc',
+    'npm ci --ignore-scripts', 'npm install --ignore-scripts', 'npm run build', 'npx --no-install tsc',
     'pnpm test', 'yarn test', 'pytest -q', 'python -m pytest', 'python3 -m pytest',
     'make test', 'cargo build', 'cargo test', 'swift build', 'swift test', 'xcodebuild test -scheme App',
     'rm -rf ./build', 'rm -rf dist/', 'rm -rf node_modules', 'rm notes.txt',
@@ -135,6 +135,7 @@ describe('parity in degraded mode (scanner missing)', () => {
   }
 
   const DEGRADED_DENY = [
+    'git checkout main', 'git restore main.go', 'git branch -D work', 'npx uninstalled-tool',
     // round 5
     'bash <<< "rm -rf ~"', "git -c core.pager='rm -rf ~' log", "vim -c ':!rm -rf ~'",
     'tar --checkpoint=1 --checkpoint-action=exec=sh x.tar',
