@@ -77,7 +77,7 @@ func (s *explicitDownloadRun) identity(file string) downloadIdentity {
 // Cooked metacharacters can be literal when quoted or escaped. Consult the
 // original spelling instead of treating every cooked '$' or '*' as expansion.
 func literalDownloadPath(word shWord) (string, bool) {
-	if word.text == "" || word.text == "-" || !downloadWordIsLiteral(word) {
+	if word.text == "" || !downloadWordIsLiteral(word) {
 		return "", false
 	}
 	return path.Clean(word.text), true
@@ -416,6 +416,10 @@ func explicitFetchOutputs(name string, args []shWord) []shWord {
 	}
 	// Wget's -O is a single effective output; repeated selection is last-wins.
 	output := outputs[len(outputs)-1]
+	// Stdout is a fetch output mode, not a restriction on literal filenames.
+	if output.text == "-" {
+		return nil
+	}
 	if _, ok := literalDownloadPath(output); !ok {
 		return nil
 	}
