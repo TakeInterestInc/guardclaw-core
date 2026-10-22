@@ -116,6 +116,10 @@ export function segments(command: string): string[] {
 
 function words(segment: string): string[] {
   const out = segment.split(/\s+/).map(unquote).filter(Boolean)
+  return unwrapWords(out)
+}
+
+function unwrapWords(out: string[]): string[] {
   // Resolve wrapper operands only far enough to identify the literal command.
   while (out.length > 0) {
     const head = (out[0] ?? '').replace(/^.*\//, '')
@@ -130,6 +134,157 @@ function words(segment: string): string[] {
     if (head === 'chroot') out.shift()
   }
   return out
+}
+
+function cleanLexicalPath(path: string): string {
+  const absolute = path.startsWith('/')
+  const parts: string[] = []
+  for (const part of path.split('/')) {
+    if (part === '' || part === '.') continue
+    if (part === '..' && parts.length && parts[parts.length - 1] !== '..' && parts[parts.length - 1] !== '~') parts.pop()
+    else parts.push(part)
+  }
+  return `${absolute ? '/' : ''}${parts.join('/')}`
+}
+
+function goInvocation(w: string[]): { sub: string; args: string[] } | undefined {
+  let i = 1
+  while (i < w.length) {
+    const arg = w[i] ?? ''
+    if (arg === '-C') { i += 2; continue }
+    if (arg.startsWith('-C=') || /^-C[^=]/.test(arg)) { i++; continue }
+    return { sub: arg, args: w.slice(i + 1) }
+  }
+  return undefined
+}
+
+// --no-install maps to npm's explicit `yes=false`: libnpmexec refuses before
+// reify when a package is missing. It may still execute an existing npm cache;
+// this is not an installed-package or trustworthy-local-code attestation.
+function npxRefusal(args: string[]): string | undefined {
+  if (args[0] !== '--no-install' || !PACKAGE_NAME.test(args[1] ?? '')) return 'npx requires --no-install followed by one named tool'
+  if (args.slice(1).some(a => /^(?:-[^-]*[ypc]|--(?:yes|install|no-install|package|call|shell)(?:=|$))/.test(a))) return 'npx with conflicting install, package or shell options'
+  return undefined
+}
+
+/** Credential reads are refused before their contents can enter a transcript. */
+export function protectedRead(path: string, home?: string, realPath?: string): Verdict | undefined {
+  const candidates = [normalize(path), expandHome(path, home), realPath ?? ''].flatMap(p => [p, cleanLexicalPath(p)])
+  const secret = new RegExp(SECRET_PATH, 'i')
+  for (const p of candidates) {
+    if (/(?:^|\/)(?:\.ssh|\.aws|\.gnupg|\.gcloud|\.azure|\.anthropic)(?:\/|$)/i.test(p) || secret.test(p)) {
+      return { rule: 'read_secret', reason: 'reads a credential path into tool output' }
+    }
+  }
+  return undefined
+}
+
+const RSYNC_VALUE_OPTIONS = new Set(`rsh rsync-path include exclude filter include-from exclude-from files-from password-file log-file log-file-format out-format backup-dir suffix temp-dir partial-dir compare-dest copy-dest link-dest chmod chown usermap groupmap remote-option address port sockopts bwlimit stop-after stop-at timeout contimeout max-delete max-size min-size block-size modify-window checksum-seed checksum-choice compress-choice compress-level skip-compress iconv info debug outbuf`.split(' '))
+const RSYNC_FLAG_OPTIONS = new Set(`archive recursive relative no-relative times perms owner group devices specials hard-links links copy-links safe-links copy-unsafe-links copy-dirlinks keep-dirlinks verbose quiet checksum compress progress partial inplace append append-verify existing ignore-existing ignore-errors force prune-empty-dirs numeric-ids dry-run update backup whole-file one-file-system itemize-changes stats human-readable protect-args secluded-args old-args msgs2stderr blocking-io non-blocking-io fsync mkpath omit-dir-times omit-link-times atimes open-noatime crtimes executability super fake-super no-super acls xattrs no-delete`.split(' '))
+
+function rsyncDeletionRefusal(args: string[]): Verdict | undefined {
+  args = args.flatMap((arg, i) => {
+    const before = args[i - 1] ?? ''
+    if (/^\d*[<>][<>&|]*$/.test(before)) return []
+    const at = arg.search(/[<>]/)
+    if (at < 0 || arg.includes('<(') || arg.includes('>(')) return [arg]
+    const prefix = arg.slice(0, at)
+    return prefix && !/^\d+$/.test(prefix) ? [prefix] : []
+  })
+  const operands: string[] = []
+  let destination = false, sources = false, unknown = false, endOptions = false
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] ?? ''
+    if (!endOptions && arg === '--') { endOptions = true; continue }
+    if (!endOptions && arg.startsWith('--')) {
+      const name = arg.slice(2).split('=')[0] ?? ''
+      if (name === 'del' || name.startsWith('delete') || (name.length >= 3 && 'delete'.startsWith(name))) destination = true
+      else if (name.startsWith('remove-source') || name.startsWith('remove-sent') || (name.length >= 'remov'.length && 'remove-source-files'.startsWith(name))) sources = true
+      else if (RSYNC_VALUE_OPTIONS.has(name)) {
+        if (!arg.includes('=') && ++i >= args.length) unknown = true
+      } else if (!arg.includes('=') && !RSYNC_FLAG_OPTIONS.has(name)) unknown = true
+      continue
+    }
+    if (!endOptions && arg.startsWith('-') && arg.length > 1) {
+      for (let j = 1; j < arg.length; j++) {
+        const ch = arg[j] ?? ''
+        if ('efBMT@'.includes(ch)) {
+          if (j === arg.length - 1 && ++i >= args.length) unknown = true
+          break
+        }
+        if (!'0acrtplogDHSxvqnuzRLKEOWJAXIbChsUy'.includes(ch)) unknown = true
+      }
+      continue
+    }
+    operands.push(arg)
+  }
+  if (!destination && !sources) return undefined
+  const plain = (path: string) => isPlainRelPath(path) && !path.split('/').includes('.git') && !protectedWrite(path)
+  if (unknown || operands.length < 2 || (destination && !plain(operands[operands.length - 1] ?? '')) || (sources && operands.slice(0, -1).some(p => !plain(p)))) {
+    return { rule: 'rsync_destructive_path', reason: 'rsync deletion outside a plain in-tree path or with unresolved options' }
+  }
+  return undefined
+}
+
+function commandAdmission(command: string, home?: string): Verdict | undefined {
+  for (const segment of segments(command.replace(/2>&1/g, ''))) {
+    const parsed = simpleWords(segment)
+    const w = parsed ? unwrapWords(parsed.map(normalize)) : words(normalize(segment))
+    const head = (w[0] ?? '').replace(/^.*\//, '')
+    const args = w.slice(1)
+    if (head === 'npx') {
+      const refused = npxRefusal(args)
+      if (refused || DEGRADED_METACHAR.test(segment)) return { rule: 'remote_execution', reason: refused ?? 'npx arguments use shell expansion or indirection' }
+    }
+    if (head === 'go') {
+      const go = goInvocation(w)
+      if (go?.sub === 'run' && go.args.some(a => a.includes('@') || /[$`*?{[]/.test(a))) return { rule: 'remote_execution', reason: 'go run of a versioned remote module or unresolved package' }
+      const output = writeTargets(segment)
+      if (output.length && (w.some(a => /^-C/.test(a)) || /(?:^|[\s;&|()])(?:cd|pushd|popd|chroot)\b/.test(normalize(command)) || /[$`*?{[]/.test(segment) || output.some(p => p.split('/').includes('..')))) return { rule: 'ambiguous_mutation', reason: 'Go output with unresolved directory or expansion' }
+    }
+    if (head === 'git') {
+      let i = 0
+      while ((args[i] ?? '').startsWith('-')) {
+        const flag = args[i++] ?? ''
+        if (['-C', '-c', '--git-dir', '--work-tree', '--namespace'].includes(flag)) i++
+      }
+      const sub = args[i] ?? '', flags = args.slice(i + 1)
+      const force = flags.includes('--force') || flags.some(a => /^-[^-]*f/.test(a))
+      if (sub === 'restore' || sub === 'checkout' || (sub === 'switch' && (force || flags.includes('--discard-changes') || flags.some(a => a === '--force-create' || a.startsWith('--force-create=') || /^-[^-]*C/.test(a)))) || (sub === 'branch' && (force || flags.some(a => /^-[^-]*D/.test(a)))) || (sub === 'reset' && flags.includes('--hard')) || (sub === 'clean' && force) || (sub === 'stash' && ['drop', 'clear'].includes(flags[0] ?? ''))) {
+        return { rule: 'git_discard_work', reason: 'discarding work or forcing branch deletion requires an explicit human operation' }
+      }
+    }
+    if (head === 'rsync') {
+      if (/[<>]/.test(segment) && /['"\\]/.test(segment)) return { rule: 'rsync_destructive_path', reason: 'rsync with quoted or escaped redirection syntax cannot be resolved lexically' }
+      const refused = rsyncDeletionRefusal(args)
+      if (refused) return refused
+    }
+    if (['cat', 'head', 'tail', 'less', 'more', 'strings', 'grep', 'rg'].includes(head)) {
+      let patternSeen = !['grep', 'rg'].includes(head), endOptions = false
+      for (let i = 0; i < args.length; i++) {
+        const arg = args[i] ?? ''
+        if (!endOptions && arg === '--') { endOptions = true; continue }
+        if (!endOptions && (arg === '-e' || arg === '--regexp')) { i++; patternSeen = true; continue }
+        if (!endOptions && /^(?:--regexp=|-e.)/.test(arg)) { patternSeen = true; continue }
+        if (!endOptions && ['-f', '--file'].includes(arg)) {
+          const refused = protectedRead(args[++i] ?? '', home)
+          if (refused) return refused
+          patternSeen = true; continue
+        }
+        if (!endOptions && /^(?:--file=|-f.)/.test(arg)) {
+          const refused = protectedRead(arg.startsWith('--') ? arg.slice(7) : arg.slice(2), home)
+          if (refused) return refused
+          patternSeen = true; continue
+        }
+        if (!endOptions && arg === '--files') { patternSeen = true; continue }
+        if (!endOptions && arg.startsWith('-')) continue
+        if (!patternSeen) { patternSeen = true; continue }
+        const refused = protectedRead(arg, home)
+        if (refused) return refused
+      }
+    }
+  }
+  return undefined
 }
 
 function isDangerousRmTarget(target: string): boolean {
@@ -182,6 +337,7 @@ export function rmVerdict(command: string): Verdict | undefined {
       targets.push(word)
     }
     if (!recursive) continue
+    if (targets.some(t => t.split('/').includes('.git'))) return { rule: 'git_history_delete', reason: 'recursive deletion of Git history requires an explicit human operation' }
     const hit = targets.find(isDangerousRmTarget)
     if (hit !== undefined) {
       const rule = hit.startsWith('~') || HOME_DIR.test(hit) ? 'rm_rf_home' : hit.startsWith('/') ? 'rm_rf_root' : hit.includes('*') ? 'rm_rf_glob' : 'rm_rf_dot'
@@ -209,6 +365,17 @@ export function writeTargets(command: string): string[] {
     if (head === 'tee') out.push(...args)
     if (['cp', 'mv', 'install', 'ln', 'rsync'].includes(head) && args.length >= 2) out.push(args[args.length - 1] ?? '')
     if (head === 'sed' && w.some(a => /^-[a-zA-Z]*i/.test(a) || a.startsWith('--in-place'))) out.push(...args.slice(1))
+    if (head === 'go') {
+      const go = goInvocation(w)
+      if (go && ['build', 'test'].includes(go.sub)) {
+        for (let i = 0; i < go.args.length; i++) {
+          const arg = go.args[i] ?? ''
+          if (arg === '--') break
+          if (arg === '-o') out.push(go.args[++i] ?? '')
+          else if (arg.startsWith('-o=')) out.push(arg.slice(3))
+        }
+      }
+    }
   }
   return out.filter(Boolean)
 }
@@ -237,7 +404,7 @@ function underRoot(path: string, root: string): boolean {
  */
 export function protectedWrite(path: string, guardRoots: string | readonly string[] = [], home?: string, realPath?: string): Verdict | undefined {
   const roots = (typeof guardRoots === 'string' ? [guardRoots] : guardRoots).filter(r => r.length > 1)
-  const candidates = [normalize(path), expandHome(path, home)]
+  const candidates = [normalize(path), expandHome(path, home)].flatMap(p => [p, cleanLexicalPath(p)])
   if (realPath) candidates.push(realPath)
   for (const p of candidates) {
     for (const root of roots) {
@@ -273,7 +440,7 @@ export function ambiguousMutation(command: string): Verdict | undefined {
   for (const segment of segments(c)) {
     const w = words(segment)
     const head = (w[0] ?? '').replace(/^.*\//, '')
-    if (['rm','cp','mv','install','ln','chmod','chown','chflags','xattr','truncate','shred','unlink','tee','dd','rsync'].includes(head) || (head === 'sed' && w.some(a => /^-[^-]*i/.test(a) || a.startsWith('--in-place')))) {
+    if (['rm','cp','mv','install','ln','chmod','chown','chflags','xattr','truncate','shred','unlink','tee','dd','rsync'].includes(head) || (head === 'go' && writeTargets(segment).length > 0) || (head === 'sed' && w.some(a => /^-[^-]*i/.test(a) || a.startsWith('--in-place')))) {
       if (changesDirectory || w.slice(1).some(a => /[$`*?{[]/.test(a))) return { rule: 'ambiguous_mutation', reason: 'mutation with unresolved directory or shell-expanded operands' }
     }
     if (head === 'find' && changesDirectory && w.includes('-delete')) return { rule: 'ambiguous_mutation', reason: 'delete with unresolved working directory' }
@@ -292,6 +459,8 @@ export function checkCommand(command: unknown, guardRoot?: string, extra: readon
   }
   const ambiguous = ambiguousMutation(command)
   if (ambiguous) return ambiguous
+  const admission = commandAdmission(command, home)
+  if (admission) return admission
   const rm = rmVerdict(c)
   if (rm) return rm
   for (const rule of COMMAND_RULES) {
@@ -316,6 +485,9 @@ export const WRITE_TOOLS: Readonly<Record<string, string>> = {
   MultiEdit: 'file_path',
   NotebookEdit: 'notebook_path',
 }
+
+/** Explicit file reads whose contents would be returned to the model. */
+export const READ_TOOLS: Readonly<Record<string, string>> = { Read: 'file_path' }
 
 /**
  * Degraded mode, when the Go scanner is missing: a command that holds any
@@ -459,10 +631,7 @@ export function degradedAllowlistRefusal(command: string): string | undefined {
       return `${head} ${sub} is not on the list`
     }
     case 'npx': {
-      const tool = args[0] ?? ''
-      if (!PACKAGE_NAME.test(tool)) return 'npx needs a named tool first'
-      if (has('-c', '--call', '-p', '--package', '--shell')) return 'npx with a shell or package option'
-      return undefined
+      return npxRefusal(args)
     }
     case 'pytest':
       return undefined

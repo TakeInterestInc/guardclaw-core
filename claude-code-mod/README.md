@@ -131,6 +131,36 @@ arbitrary program effects. A no-match verdict does not establish containment
 or scanner authenticity. Use host approval or a sandbox for those guarantees;
 keep scanner installation and upgrades outside the agent.
 
+### Remote acquisition, work preservation and transcript reads
+
+The mod refuses versioned remote `go run` packages and implicit `npx` package
+acquisition in both modes. Use `npx --no-install <named-tool>` for an existing
+tool; conflicting install/package/shell flags and shell-expanded arguments are
+refused. This prevents a missing package from being installed for that call;
+it does not attest the package or an existing npm cache as trustworthy.
+
+Go build/test `-o` destinations meet the same protected-write checks as redirects.
+Output combined with a directory change, expansion or parent traversal refuses
+because the lexical matcher cannot prove its destination. `rsync` deletion
+variants require a plain in-tree destination; source-removal variants require
+plain in-tree sources. Option operands and `--` are parsed separately. Filesystem
+symlinks or effects of an arbitrary called program are not proved safe by a
+plain spelling.
+
+Discarding Git work, forced branch changes and recursive `.git` deletion refuse.
+`git checkout` is ambiguous between branch switching and path restoration, so
+use `git switch <branch>` for a normal branch transition. Run an intentional
+discard, restoration or forced deletion yourself outside the agent. The mod has
+no separate confirmation tier and never turns a refusal into an approval.
+
+Explicit `Read` calls and ordinary shell readers (`cat`, `head`, `tail`, `grep`,
+`rg` and related readers) refuse credential paths, including `.ssh`, `.aws` and
+`.netrc`. File-tool reads also check resolved paths and refuse when the target
+cannot be resolved. This is not arbitrary-program
+information-flow tracking: `npm run`, `make`, pytest plugins and Git hooks can
+execute agent-writable local code. Native permissions and a sandbox remain
+necessary; a no-match result does not establish that local code is trusted.
+
 ### Install the scanner
 
 ```
@@ -171,8 +201,8 @@ and its first word and arguments are on this list:
 | Kind | Runs | Never |
 |---|---|---|
 | read-only | `ls`, `pwd`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, `which`, `echo`, `date`, `whoami`, `env` (no arguments), `diff`, `stat`, `file`, `tree` | `find -exec/-execdir/-ok/-delete/-fprint`, `rg --pre`, `date --set` |
-| git | `status`, `diff`, `log`, `show`, `branch`, `fetch`, `pull`, `add`, `commit`, `stash list`, `checkout`, `switch`, `restore`, `rev-parse`, `remote -v` | any `-c`, `--exec`, `-x`, `--config`, `--upload-pack`, `--receive-pack`, `--output`, `--git-dir`, `--work-tree` |
-| build and test | `go test/build/vet/run`, `npm`/`pnpm`/`yarn` `test`, `ci`/`install` with `--ignore-scripts`, `run <script>`, `npx <tool>`, `pytest`, `python -m pytest`, `make <target>`, `cargo build/test`, `swift build/test`, `xcodebuild test` | `go -exec/-toolexec`, `npx -c/--call/-p`, `make -f`, a leading `VAR=value` |
+| git | `status`, `diff`, `log`, `show`, `branch`, `fetch`, `pull`, `add`, `commit`, `stash list`, ordinary `switch`, `rev-parse`, `remote -v` | checkout/restore, forced branch changes, any `-c`, `--exec`, `-x`, `--config`, `--upload-pack`, `--receive-pack`, `--output`, `--git-dir`, `--work-tree` |
+| build and test | local `go test/build/vet/run`, `npm`/`pnpm`/`yarn` `test`, `ci`/`install` with `--ignore-scripts`, `run <script>`, `npx --no-install <tool>`, `pytest`, `python -m pytest`, `make <target>`, `cargo build/test`, `swift build/test`, `xcodebuild test` | versioned remote `go run`, protected `-o`, `go -exec/-toolexec`, implicit npx acquisition or conflicting options, `make -f`, a leading `VAR=value` |
 | rm | `rm` whose every target is a plain relative path inside the folder (optional `./`, segments of `[A-Za-z0-9._-]`, no `.`, `..`, glob, `~`, `$` or leading `/`) | anything else |
 
 Everything else is denied with "GuardClaw scanner not installed, only simple
@@ -337,6 +367,7 @@ degraded notice appended when the scanner is missing.
 
 ```
 go test -race ./...                       # includes the scanner corpus and fixture check
+node --test claude-code-mod/tests/*.test.mjs # Node 22.18+; pure rules and a synthetic host
 claude plugin validate claude-code-mod
 claude plugin test claude-code-mod
 ```

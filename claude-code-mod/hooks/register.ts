@@ -24,6 +24,8 @@ import {
   expandHome,
   DEFAULT_TRUSTED_MARKETPLACES,
   protectedWrite,
+  protectedRead,
+  READ_TOOLS,
   riskyCallsOf,
   scannerWrite,
   riskyEventsOf,
@@ -244,6 +246,15 @@ export const register: Register = (on, options) => {
         const real = await placed($, expandHome(path, home))
         verdict = protectedWrite(path, [$.plugin.root, (await rootReal($)) ?? ''], home, real)
           ?? scannerWrite(path, real, await scannerPaths($, scannerPath), home)
+      }
+      if (e.tool in READ_TOOLS) {
+        const field = READ_TOOLS[e.tool] ?? 'file_path'
+        const path = input[field]
+        if (typeof path !== 'string') throw new TypeError(`${e.tool} ${field} is ${typeof path}, not a string`)
+        const real = await placed($, expandHome(path, home))
+        verdict = real === undefined
+          ? { rule: 'read_unresolved_path', reason: 'the guard could not resolve this read target' }
+          : protectedRead(path, home, real)
       }
       if (!verdict && e.tool === 'Bash' && typeof input.command !== 'string') {
         throw new TypeError(`Bash command is ${typeof input.command}, not a string`)
