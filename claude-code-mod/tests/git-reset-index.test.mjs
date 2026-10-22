@@ -15,11 +15,13 @@ test('index and worktree reset modes require a human operation', () => {
     'git reset --patch tracked.txt', 'git reset -N HEAD',
     'git reset --soft --merge HEAD',
     'git -C repo reset --merge HEAD', 'sudo git reset --merge HEAD',
+    'git reset --soft "$MODE"', 'git reset --soft {--hard,HEAD}',
+    'git reset --soft HEAD -- tracked.txt',
   ]) {
     assert.equal(checkCommand(command)?.rule, 'git_discard_work', command);
     assert.ok(degradedVerdict(command), command);
   }
-  for (const command of ['git reset --soft HEAD~1', 'git reset -q --soft HEAD', 'git status', 'git switch dev']) {
+  for (const command of ['git reset --soft HEAD~1', 'git reset -q --soft HEAD', 'git reset -h', 'git status', 'git switch dev']) {
     assert.equal(checkCommand(command), undefined, command);
   }
   // Degraded mode's preexisting Git subcommand allowlist still refuses reset.

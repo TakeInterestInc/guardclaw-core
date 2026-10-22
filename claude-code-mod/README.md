@@ -159,6 +159,12 @@ symlinks or effects of an arbitrary called program are not proved safe by a
 plain spelling.
 
 Discarding Git work, forced branch changes and recursive `.git` deletion refuse.
+Index-reset modes (including default/mixed, merge, keep, pathspec and patch
+forms) can discard a distinct staged snapshot, so they require a human
+operation. Only a literal `git reset --soft [commit]` with optional `-q`/`--quiet`
+passes this reset rule; unknown/abbreviated options and expanded operands are
+refused. This preserves index/worktree content, not an assurance about changing
+branch history. Degraded mode retains its existing refusal of all reset commands.
 `git checkout` is ambiguous between branch switching and path restoration, so
 use `git switch <branch>` for a normal branch transition. Run an intentional
 discard, restoration or forced deletion yourself outside the agent. The mod has

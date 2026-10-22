@@ -203,6 +203,20 @@ function npxRefusal(args: string[]): string | undefined {
   return undefined
 }
 
+// Every index-reset form can discard a distinct staged snapshot, including
+// default/mixed/keep and pathspec/patch forms. Permit only an explicit literal
+// soft reset with at most one commit operand; it leaves index/worktree intact.
+function gitResetChangesIndex(args: string[]): boolean {
+  if (args.length === 1 && (args[0] === '-h' || args[0] === '--help')) return false
+  let soft = false, commits = 0
+  for (const arg of args) {
+    if (arg === '--soft') { soft = true; continue }
+    if (arg === '-q' || arg === '--quiet') continue
+    if (arg.startsWith('-') || /[$`*?{[]/.test(arg) || ++commits > 1) return true
+  }
+  return !soft
+}
+
 /** Credential reads are refused before their contents can enter a transcript. */
 export function protectedRead(path: string, home?: string, realPath?: string): Verdict | undefined {
   const candidates = [normalize(path), expandHome(path, home), realPath ?? ''].flatMap(p => [p, cleanLexicalPath(p)])
@@ -333,7 +347,7 @@ function commandAdmission(command: string, home?: string): Verdict | undefined {
       }
       const sub = args[i] ?? '', flags = args.slice(i + 1)
       const force = flags.includes('--force') || flags.some(a => /^-[^-]*f/.test(a))
-      if (sub === 'restore' || sub === 'checkout' || (sub === 'switch' && (force || flags.includes('--discard-changes') || flags.some(a => a === '--force-create' || a.startsWith('--force-create=') || /^-[^-]*C/.test(a)))) || (sub === 'branch' && (force || flags.some(a => /^-[^-]*D/.test(a)))) || (sub === 'reset' && flags.includes('--hard')) || (sub === 'clean' && force) || (sub === 'stash' && ['drop', 'clear'].includes(flags[0] ?? ''))) {
+      if (sub === 'restore' || sub === 'checkout' || (sub === 'switch' && (force || flags.includes('--discard-changes') || flags.some(a => a === '--force-create' || a.startsWith('--force-create=') || /^-[^-]*C/.test(a)))) || (sub === 'branch' && (force || flags.some(a => /^-[^-]*D/.test(a)))) || (sub === 'reset' && gitResetChangesIndex(flags)) || (sub === 'clean' && force) || (sub === 'stash' && ['drop', 'clear'].includes(flags[0] ?? ''))) {
         return { rule: 'git_discard_work', reason: 'discarding work or forcing branch deletion requires an explicit human operation' }
       }
     }
