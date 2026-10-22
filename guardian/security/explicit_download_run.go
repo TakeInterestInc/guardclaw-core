@@ -261,7 +261,16 @@ func (s *explicitDownloadRun) words(words []shWord, depth int) {
 		p := &shParser{s: program.script()}
 		commands := p.parseList(0)
 		if name == "eval" {
+			// eval runs in this location, but reconstructed dynamic text cannot
+			// prove its writes or sinks. Keep those persistent origins while
+			// restoring the outer invocation's proof for independent later work.
+			certainty, origin := s.certainty, s.origin
+			s.certainty = weakerInvocation(certainty, program.certainty)
+			if certainty == invocationEstablished && program.certainty == invocationUncertain {
+				s.origin = program.origin
+			}
 			s.list(commands, depth+1)
+			s.certainty, s.origin = certainty, origin
 		} else {
 			child := s.childState()
 			child.certainty = weakerInvocation(s.certainty, program.certainty)

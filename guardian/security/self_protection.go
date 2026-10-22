@@ -542,8 +542,16 @@ func commandIndexObserved(words []shWord, observe func(string, []shWord)) (int, 
 		}
 		switch strings.ToLower(t) {
 		case "{", "!", "then", "do", "else", "elif", "if", "while", "until",
-			"nohup", "builtin", "noglob", "busybox":
+			"builtin", "noglob", "busybox":
 			i++
+			continue
+		case "nohup":
+			// nohup has no command-bearing option operands. Consume only its
+			// proved terminator; unsupported options remain the selected word.
+			i++
+			if i < len(words) && words[i].text == "--" && downloadWordIsLiteral(words[i]) {
+				i++
+			}
 			continue
 		case "sudo", "doas", "env", "nice", "timeout", "stdbuf", "ionice", "chroot",
 			"command", "exec", "time":

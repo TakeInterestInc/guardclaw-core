@@ -309,10 +309,24 @@ func innerPrograms(name string, args []shWord) []invocationProgram {
 		return legacyInvocationProgram(name, args, nil, "legacy_inline_selection")
 	}
 	if name == "eval" {
-		return []invocationProgram{{original: args, index: -1, assembled: wordTexts(args), certainty: invocationEstablished}}
+		return []invocationProgram{assembledInvocationProgram(name, args)}
 	}
 	if name == "watch" {
-		return []invocationProgram{{original: args, index: -1, assembled: wordTexts(skipOptions(args, "nd")), certainty: invocationEstablished}}
+		return []invocationProgram{assembledInvocationProgram(name, skipOptions(args, "nd"))}
 	}
 	return nil
+}
+
+// Assembly does not undo the outer shell's expansion. Inner quote characters
+// in cooked text cannot establish literal provenance lost in an original word.
+func assembledInvocationProgram(name string, args []shWord) invocationProgram {
+	program := invocationProgram{original: args, index: -1, assembled: wordTexts(args), certainty: invocationEstablished}
+	for _, word := range args {
+		if !downloadWordIsLiteral(word) {
+			program.certainty = invocationUncertain
+			program.origin = invocationOrigin{profile: name, reason: "dynamic_assembled_argument"}
+			break
+		}
+	}
+	return program
 }
