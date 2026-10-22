@@ -12,10 +12,12 @@ import (
 func TestBashStartupContinuesBeforeProgram(t *testing.T) {
 	for _, input := range []string{
 		"curl -o x.sh URL && bash - x.sh",
+		"curl -o x.sh URL && bash + x.sh",
 		"bash -nc +n 'curl -o x.sh URL; bash x.sh'",
 		"bash -c -e 'curl -o x.sh URL; bash x.sh'",
 		"bash -c -- 'curl -o x.sh URL; bash x.sh'",
 		"bash -c - 'curl -o x.sh URL; bash x.sh'",
+		"bash -c + 'curl -o x.sh URL; bash x.sh'",
 	} {
 		if !matchExplicitDownloadRun(input) {
 			t.Errorf("helper missed %q", input)
@@ -32,6 +34,8 @@ func TestBashStartupContinuesBeforeProgram(t *testing.T) {
 		"bash -nc 'curl -o x.sh URL; bash x.sh' +n",
 		"curl -o x.sh URL && bash -n - x.sh +n",
 		"curl -o x.sh URL && bash -s - x.sh",
+		"curl -o x.sh URL && bash -n + x.sh +n",
+		"curl -o x.sh URL && bash -s + x.sh",
 	} {
 		if matchExplicitDownloadRun(input) {
 			t.Errorf("nonexecuting form inferred: %q", input)
@@ -58,14 +62,18 @@ func TestBashStartupBoundaryNativeOracle(t *testing.T) {
 		want string
 	}{
 		{[]string{"-", file}, "FIXED"},
+		{[]string{"+", file}, "FIXED"},
 		{[]string{"-nc", "+n", "printf FIXED"}, "FIXED"},
 		{[]string{"-c", "-e", "printf FIXED"}, "FIXED"},
 		{[]string{"-c", "--", "printf FIXED"}, "FIXED"},
 		{[]string{"-c", "-", "printf FIXED"}, "FIXED"},
+		{[]string{"-c", "+", "printf FIXED"}, "FIXED"},
 		{[]string{"-c", "-n", "printf FIXED"}, ""},
 		{[]string{"-nc", "printf FIXED", "+n"}, ""},
 		{[]string{"-n", "-", file, "+n"}, ""},
 		{[]string{"-s", "-", file}, ""},
+		{[]string{"-n", "+", file, "+n"}, ""},
+		{[]string{"-s", "+", file}, ""},
 	} {
 		cmd := exec.Command(bash, append([]string{"--noprofile", "--norc"}, tc.args...)...)
 		cmd.Dir = home
