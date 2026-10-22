@@ -23,8 +23,8 @@ func readBashInvocation(args []shWord) bashInvocation {
 		if !downloadWordIsLiteral(word) {
 			return bashInvocation{}
 		}
-		if t == "--" || t == "-" {
-			// Both terminate startup option parsing. A following word can be
+		if t == "--" || t == "-" || t == "+" {
+			// These terminate startup option parsing. A following word can be
 			// the -c program or file, even when it starts with '-' or '+'.
 			if i+1 < len(args) {
 				if inline {
