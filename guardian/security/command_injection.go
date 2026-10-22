@@ -362,6 +362,9 @@ func CheckCommandInjection(input string) *CommandInjectionResult {
 	if matchRsyncDeletion(input) {
 		return rsyncDeletionResult()
 	}
+	if matchExplicitDownloadRun(input) {
+		return explicitDownloadRunResult()
+	}
 
 	var indicators []string
 

@@ -176,6 +176,26 @@ Unicode case folding on macOS and Windows (`.ſsh` matches `.ssh`), and treats
 It compares text: `IsProtectedOnDisk` also resolves symlinks for paths that
 exist, and neither replaces OS file permissions.
 
+### Literal download execution checks
+
+`security.CheckCommandInjection` and `security.CheckAgentCommand` (including
+`guardclaw-scan --stdin-command [--agent]`) also compare known explicit
+`curl -o/--output` and `wget -O/--output-document` outputs with later literal
+POSIX-shell file, source, and direct-path commands within the same input.
+They inspect strings without fetching or executing samples. Shell `-n`
+syntax checks and data files passed to a separate local program keep their
+ordinary behavior.
+
+This is a bounded lexical candidate check, not proof of filesystem identity or
+complete download provenance. It uses the existing parser and known wrapper/
+option grammar; unsupported options discard that fetch's inferred outputs.
+Inputs that appear to change directory, remote/config-selected names, residual
+operator-bearing words, tee flow, modules/other interpreters, filesystem and
+PATH aliases, and separate invocations remain outside this boundary. A source
+command can search PATH, so a matching unqualified source name is conservative.
+The general `tiered.Engine.Scan` surface remains its pattern-based scanner.
+Broader gaps remain tracked in [#14](https://github.com/TakeInterestInc/guardclaw-core/issues/14).
+
 ## What it detects
 
 Baseline patterns for prompt injection, command injection, SQL injection, SSRF,
