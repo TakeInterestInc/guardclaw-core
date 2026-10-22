@@ -176,6 +176,55 @@ Unicode case folding on macOS and Windows (`.ſsh` matches `.ssh`), and treats
 It compares text: `IsProtectedOnDisk` also resolves symlinks for paths that
 exist, and neither replaces OS file permissions.
 
+### Literal download execution checks
+
+`security.CheckCommandInjection` and `security.CheckAgentCommand` (including
+`guardclaw-scan --stdin-command [--agent]`) also compare known explicit
+`curl -o/--output` and `wget -O/--output-document` outputs with later literal
+POSIX-shell file, source, and direct-path commands within the same input.
+They inspect strings without fetching or executing samples. Quoted or escaped
+literal filename characters retain their shell spelling; filename comparison
+runs only on the original input. `CheckCommandInjectionNormalized` and the CLI
+retain normalized regex matching separately. Supported Bash `-n` syntax checks
+and data files passed to a separate local program keep their ordinary behavior;
+other shells receive no syntax-only exemption.
+
+This is a bounded lexical candidate check, not proof of filesystem identity or
+complete download provenance. It uses the existing parser and known wrapper/
+option grammar; unsupported options discard that fetch's inferred outputs.
+Candidate writes persist in a shared ledger keyed by opaque filesystem-root
+and current-directory tokens. Represented child shells and substitutions copy
+their location while sharing prior writes, so a later child `cd` cannot erase a
+write made in the parent's directory. Directory effects assign new tokens;
+separate changes never imply equivalent locations. Cwd-only wrappers share
+absolute candidates; changed-root wrappers isolate them. Detection is monotonic.
+One typed invocation proof records shell-specific option/source ownership and
+keeps later positional data separate. Bash, Dash/sh and zsh use distinct bounded
+startup profiles; advanced ksh/ash options remain unqualified. Unknown grammar
+never grants a noexec exemption or silently hides a matching download candidate.
+A candidate in unresolved source ownership is refused with the distinct
+`download_source_unresolved` rule, without asserting execution or exporting raw
+source/path details. Unknown inline origin follows descendant traversal and
+persistent writes, so a later known sink cannot upgrade an uncertain write.
+Known local-script data arguments and option values retain ordinary behavior;
+unknown commands without a relevant download candidate do too. Existing Bash
+syntax-only exemptions remain bounded to their native-backed forms. Source
+commands consume a supported `--` terminator.
+Curl requires one literal URL and one explicit output; its own URL glob syntax
+is excluded even inside shell quotes. Wget's supported single-URL `-O` form
+uses its last output selection. Stdout outputs infer no file. This association
+models a candidate transfer, not successful network writes or command success.
+State grows with visited supported fetches and directory effects, with existing
+child-depth limits; the API does not impose an input byte cap. Directory option
+modes, including `pushd -n`/`popd -n`, are not precisely modeled.
+Find command templates, full shell control-flow/cwd resolution,
+remote/config-selected names, residual
+operator-bearing words, tee flow, modules/other interpreters, filesystem and
+PATH aliases, and separate invocations remain outside this boundary. A source
+command can search PATH, so a matching unqualified source name is conservative.
+The general `tiered.Engine.Scan` surface remains its pattern-based scanner.
+Broader gaps remain tracked in [#14](https://github.com/TakeInterestInc/guardclaw-core/issues/14).
+
 ## What it detects
 
 Baseline patterns for prompt injection, command injection, SQL injection, SSRF,

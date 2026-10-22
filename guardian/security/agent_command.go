@@ -71,6 +71,9 @@ func CheckAgentCommand(input string) *CommandInjectionResult {
 	if input == "" {
 		return none
 	}
+	if result := checkExplicitDownloadRun(input); result != nil {
+		return result
+	}
 	w := &agentWalker{defined: definedNames(input), cwdChanged: agentChangesDirectory(input)}
 	for _, s := range []string{input, NormalizeInput(input)} {
 		if r := w.strictLine(s); r != nil {
@@ -240,8 +243,8 @@ func visitWords(words []shWord, depth int, fn func(name string, args []shWord)) 
 		return
 	}
 	fn(name, args)
-	for _, inner := range innerScripts(name, args) {
-		p := &shParser{s: inner}
+	for _, program := range innerPrograms(name, args) {
+		p := &shParser{s: program.script()}
 		cmds := p.parseList(0)
 		if p.overflow {
 			fn("", nil)
@@ -254,19 +257,21 @@ func visitWords(words []shWord, depth int, fn func(name string, args []shWord)) 
 	}
 }
 
-// innerScripts are the strings a command runs as shell code.
+// shellSyntaxOnly recognizes Bash startup no-execute options backed by the
+// native fixed-printf oracle. Stop at the script operand or -c program; that
+// program and its positional arguments are not more shell options.
+func shellSyntaxOnly(name string, args []shWord) bool {
+	return invocationShell(name) && readShellInvocation(name, args).noexec
+}
+
+// Retain the private text adapter for existing callers/tests only. Traversal
+// consumes innerPrograms directly so unknown inline provenance is not erased.
 func innerScripts(name string, args []shWord) []string {
-	switch {
-	case agentShells[name] || name == "su":
-		if s, ok := shellScriptArg(args); ok {
-			return []string{s}
-		}
-	case name == "eval":
-		return []string{wordTexts(args)}
-	case name == "watch":
-		return []string{wordTexts(skipOptions(args, "nd"))}
+	var scripts []string
+	for _, program := range innerPrograms(name, args) {
+		scripts = append(scripts, program.script())
 	}
-	return nil
+	return scripts
 }
 
 // innerCommands are the commands xargs and find -exec run.
@@ -568,8 +573,8 @@ func (w *agentWalker) command(words []shWord) *CommandInjectionResult {
 			return r
 		}
 	}
-	for _, s := range innerScripts(name, args) {
-		if r := w.script(s); r != nil {
+	for _, program := range innerPrograms(name, args) {
+		if r := w.script(program.script()); r != nil {
 			return r
 		}
 	}

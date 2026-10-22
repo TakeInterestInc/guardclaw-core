@@ -524,6 +524,13 @@ func splitCommand(words []shWord) (string, []shWord, []shWord) {
 // commandIndex returns the index of the word a simple command runs, after
 // leading VAR=value assignments, keywords and wrappers, and the assignments.
 func commandIndex(words []shWord) (int, []shWord) {
+	return commandIndexObserved(words, nil)
+}
+
+// commandIndexObserved shares command-position parsing with callers that also
+// need wrapper effects. The observer sees only the wrapper's consumed words,
+// never arguments belonging to the wrapped command.
+func commandIndexObserved(words []shWord, observe func(string, []shWord)) (int, []shWord) {
 	var assigns []shWord
 	i := 0
 	for i < len(words) {
@@ -535,12 +542,28 @@ func commandIndex(words []shWord) (int, []shWord) {
 		}
 		switch strings.ToLower(t) {
 		case "{", "!", "then", "do", "else", "elif", "if", "while", "until",
-			"nohup", "builtin", "noglob", "busybox":
+			"builtin", "noglob", "busybox":
 			i++
+			continue
+		case "nohup":
+			// nohup has no command-bearing option operands. Consume only its
+			// proved terminator; unsupported options remain the selected word.
+			i++
+			if i < len(words) && words[i].text == "--" && downloadWordIsLiteral(words[i]) {
+				i++
+			}
 			continue
 		case "sudo", "doas", "env", "nice", "timeout", "stdbuf", "ionice", "chroot",
 			"command", "exec", "time":
-			i = skipWrapper(words, i)
+			next := skipWrapper(words, i)
+			if observe != nil {
+				end := next
+				if end > len(words) {
+					end = len(words)
+				}
+				observe(strings.ToLower(t), words[i+1:end])
+			}
+			i = next
 			continue
 		}
 		break
@@ -550,22 +573,48 @@ func commandIndex(words []shWord) (int, []shWord) {
 
 // skipWrapper skips a wrapper command and its options, returning the index
 // of the wrapped command.
+var wrapperValueLetters = map[string]string{
+	"sudo": "ugpChUTrtDR", "doas": "uC", "env": "uSC", "nice": "n",
+	"timeout": "sk", "command": "", "exec": "a", "time": "fo",
+	"stdbuf": "ioe", "ionice": "cnp", "chroot": "",
+}
+
+var wrapperValueLongOptions = map[string][]string{
+	"sudo": strings.Fields("user group prompt close-from host other-user command-timeout role type chdir chroot"),
+	"env":  strings.Fields("unset split-string chdir"),
+	"nice": {"adjustment"}, "timeout": {"signal", "kill-after"},
+	"time": {"format", "output"}, "stdbuf": {"input", "output", "error"},
+	"ionice": {"class", "classdata", "pid"}, "chroot": {"userspec", "groups"},
+}
+
+// wrapperOption describes one option token, stopping at the first short
+// option that consumes the token's remainder or the following argv word.
+func wrapperOption(wrapper, option string) (nextOperand, changesDirectory, changesRoot bool) {
+	if strings.HasPrefix(option, "--") {
+		key, _, attached := strings.Cut(option[2:], "=")
+		for _, candidate := range wrapperValueLongOptions[wrapper] {
+			if key == candidate {
+				nextOperand = !attached
+				break
+			}
+		}
+		changesDirectory = (wrapper == "env" && key == "chdir") || (wrapper == "sudo" && (key == "chdir" || key == "chroot"))
+		changesRoot = wrapper == "sudo" && key == "chroot"
+		return
+	}
+	for j := 1; j < len(option); j++ {
+		if strings.ContainsRune(wrapperValueLetters[wrapper], rune(option[j])) {
+			changesDirectory = (wrapper == "env" && option[j] == 'C') || (wrapper == "sudo" && (option[j] == 'D' || option[j] == 'R'))
+			changesRoot = wrapper == "sudo" && option[j] == 'R'
+			return j == len(option)-1, changesDirectory, changesRoot
+		}
+	}
+	return false, false, false
+}
+
 func skipWrapper(words []shWord, i int) int {
 	wrapper := strings.ToLower(words[i].text)
 	i++
-	withArg := map[string]string{
-		"sudo":    "ugpChUTrtD",
-		"doas":    "uC",
-		"env":     "uSC",
-		"nice":    "n",
-		"timeout": "sk",
-		"command": "",
-		"exec":    "a",
-		"time":    "fo",
-		"stdbuf":  "ioe",
-		"ionice":  "cnp",
-		"chroot":  "",
-	}[wrapper]
 	for i < len(words) {
 		t := words[i].text
 		if t == "--" {
@@ -578,12 +627,8 @@ func skipWrapper(words []shWord, i int) int {
 			}
 		}
 		if strings.HasPrefix(t, "-") && len(t) > 1 {
-			if (wrapper == "env" || wrapper == "sudo") && t == "--chdir" {
-				i += 2
-				continue
-			}
 			i++
-			if !strings.HasPrefix(t, "--") && len(t) == 2 && strings.IndexByte(withArg, t[1]) >= 0 {
+			if operand, _, _ := wrapperOption(wrapper, t); operand {
 				i++
 			}
 			continue
