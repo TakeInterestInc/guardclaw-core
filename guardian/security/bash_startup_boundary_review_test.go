@@ -36,6 +36,9 @@ func TestBashStartupContinuesBeforeProgram(t *testing.T) {
 		if matchExplicitDownloadRun(input) {
 			t.Errorf("nonexecuting form inferred: %q", input)
 		}
+		if got := CheckAgentCommand(input); got.Detected {
+			t.Errorf("nonexecuting form denied by agent: %q (%s)", input, got.PatternName)
+		}
 	}
 }
 
