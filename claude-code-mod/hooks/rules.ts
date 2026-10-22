@@ -158,6 +158,42 @@ function goInvocation(w: string[]): { sub: string; args: string[] } | undefined 
   return undefined
 }
 
+const GO_RUN_VALUE_FLAGS = new Set(`C p asmflags compiler buildmode gcflags gccgoflags installsuffix ldflags mod modfile overlay pgo pkgdir tags toolexec exec covermode coverpkg debug-actiongraph debug-runtime-trace debug-trace`.split(' '))
+const GO_RUN_BOOL_FLAGS = new Set(`a n x v asan msan race buildvcs json linkshared modcacherw trimpath work cover`.split(' '))
+const GO_RUN_EXPANSION = /[$`*?{[]/
+
+// cmd/go/internal/run compiles consecutive .go files, or exactly one package,
+// then passes the remaining argv to that program. Build flag values are not
+// package operands. Unknown option grammar cannot prove that boundary.
+function goRunRefusal(args: string[]): string | undefined {
+  let i = 0
+  for (; i < args.length; i++) {
+    const arg = args[i] ?? ''
+    if (arg === '--') { i++; break }
+    if (!arg.startsWith('-') || arg === '-') break
+    if (GO_RUN_EXPANSION.test(arg)) return 'go run with an unresolved build flag'
+    const flag = arg.replace(/^--?/, '').split('=')[0] ?? ''
+    if (flag === 'h' || flag === 'help') return undefined
+    if (GO_RUN_VALUE_FLAGS.has(flag)) {
+      if (!arg.includes('=')) {
+        const value = args[++i]
+        if (value === undefined || GO_RUN_EXPANSION.test(value)) return 'go run with an unresolved build-option operand'
+      }
+    } else if (!GO_RUN_BOOL_FLAGS.has(flag)) return 'go run with unknown build-option grammar'
+  }
+  const first = args[i]
+  if (first === undefined) return undefined
+  if (first.endsWith('.go')) {
+    for (; i < args.length && (args[i] ?? '').endsWith('.go'); i++) {
+      if (GO_RUN_EXPANSION.test(args[i] ?? '')) return 'go run with unresolved source-file operands'
+    }
+    return undefined
+  }
+  if (GO_RUN_EXPANSION.test(first)) return 'go run with an unresolved package operand'
+  const local = first.startsWith('./') || first.startsWith('../') || first.startsWith('/') || /^[A-Za-z]:[\\/]/.test(first)
+  return first.includes('@') && !local ? 'go run of a versioned remote module' : undefined
+}
+
 // --no-install maps to npm's explicit `yes=false`: libnpmexec refuses before
 // reify when a package is missing. It may still execute an existing npm cache;
 // this is not an installed-package or trustworthy-local-code attestation.
@@ -282,7 +318,10 @@ function commandAdmission(command: string, home?: string): Verdict | undefined {
     }
     if (head === 'go') {
       const go = goInvocation(w)
-      if (go?.sub === 'run' && go.args.some(a => a.includes('@') || /[$`*?{[]/.test(a))) return { rule: 'remote_execution', reason: 'go run of a versioned remote module or unresolved package' }
+      if (go?.sub === 'run') {
+        const refused = goRunRefusal(go.args)
+        if (refused) return { rule: 'remote_execution', reason: refused }
+      }
       const output = writeTargets(segment)
       if (output.length && (w.some(a => /^-C/.test(a)) || /(?:^|[\s;&|()])(?:cd|pushd|popd|chroot)\b/.test(normalize(command)) || /[$`*?{[]/.test(segment) || output.some(p => p.split('/').includes('..')))) return { rule: 'ambiguous_mutation', reason: 'Go output with unresolved directory or expansion' }
     }

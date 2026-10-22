@@ -138,6 +138,11 @@ acquisition in both modes. Use `npx --no-install <named-tool>` for an existing
 tool; conflicting install/package/shell flags and shell-expanded arguments are
 refused. This prevents a missing package from being installed for that call;
 it does not attest the package or an existing npm cache as trustworthy.
+For `go run`, known build-option operands are consumed before identifying its
+one package or consecutive `.go` source files. Following program arguments,
+such as an email address or quoted `*`, are not package acquisition. Unknown
+build-option syntax and expanded package/source operands remain refused. Local
+Go programs and their dependencies are not attested as safe by this check.
 
 Go build/test `-o` destinations meet the same protected-write checks as redirects.
 Output combined with a directory change, expansion or parent traversal refuses
