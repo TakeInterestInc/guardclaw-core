@@ -78,7 +78,12 @@ test('isolated native Git oracle demonstrates staged-content loss and soft prese
     if (work !== staged) writeFileSync(file, work);
     writeFileSync(join(root, fixture + '.staged-backup'), staged);
     writeFileSync(join(root, fixture + '.work-backup'), work);
-    git(...globals, 'reset', mode, 'HEAD');
+    try { git(...globals, 'reset', mode, 'HEAD'); }
+    catch (error) {
+      // --version routes to the version command, which rejects reset's flags;
+      // it still must preserve both snapshots rather than run reset.
+      if (!informational || error.status !== 129) throw error;
+    }
     if (mode === '--soft' || informational) {
       assert.equal(git('show', ':tracked.txt'), staged);
       assert.equal(readFileSync(file, 'utf8'), work);
