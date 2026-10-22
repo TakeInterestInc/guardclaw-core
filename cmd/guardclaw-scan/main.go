@@ -43,10 +43,10 @@ type commandVerdict struct {
 	Reason   string  `json:"reason,omitempty"`
 }
 
-// runCommand scans one command read from stdin with CheckCommandInjection
-// (strict, the default) or CheckAgentCommand (agent), once as written and
-// once after NormalizeInput (NFKC, homoglyph and zero-width folding), and
-// denies when either pass detects. It returns 1 for a deny, 0 for an allow
+// runCommand scans one command read from stdin with CheckCommandInjectionNormalized
+// (strict, the default) or CheckAgentCommand (agent). Each entry point retains
+// normalized regex matching and checks literal file identity only as written, and
+// denies when either view detects. It returns 1 for a deny, 0 for an allow
 // and 2 when the command could not be read whole.
 //
 // It deliberately does not use tiered.Engine.Scan: that engine is the general
@@ -64,23 +64,20 @@ func runCommand(stdin io.Reader, stdout, stderr io.Writer, agent bool) int {
 	}
 	command := string(data)
 	verdict := commandVerdict{Decision: "allow"}
-	check := security.CheckCommandInjection
+	check := security.CheckCommandInjectionNormalized
 	if agent {
 		check = security.CheckAgentCommand
 	}
-	for _, input := range []string{command, security.NormalizeInput(command)} {
-		r := check(input)
-		if r.Detected {
-			verdict = commandVerdict{
-				Decision: "deny",
-				Rule:     r.PatternName,
-				Category: string(r.Category),
-				Score:    r.Score,
-				Reason:   r.Reason,
-			}
-			break
+	if r := check(command); r.Detected {
+		verdict = commandVerdict{
+			Decision: "deny",
+			Rule:     r.PatternName,
+			Category: string(r.Category),
+			Score:    r.Score,
+			Reason:   r.Reason,
 		}
 	}
+
 	line, err := json.Marshal(verdict)
 	if err != nil {
 		fmt.Fprintln(stderr, "encode verdict:", err)

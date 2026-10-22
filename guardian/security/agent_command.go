@@ -71,6 +71,9 @@ func CheckAgentCommand(input string) *CommandInjectionResult {
 	if input == "" {
 		return none
 	}
+	if matchExplicitDownloadRun(input) {
+		return explicitDownloadRunResult()
+	}
 	w := &agentWalker{defined: definedNames(input), cwdChanged: agentChangesDirectory(input)}
 	for _, s := range []string{input, NormalizeInput(input)} {
 		if r := w.strictLine(s); r != nil {
@@ -140,9 +143,6 @@ func agentMutates(name string, args []shWord) bool {
 func (w *agentWalker) strictLine(s string) *CommandInjectionResult {
 	if matchRsyncDeletion(s) {
 		return rsyncDeletionResult()
-	}
-	if matchExplicitDownloadRun(s) {
-		return explicitDownloadRunResult()
 	}
 	if name, ok := MatchSelfProtection(s); ok {
 		return agentResult(name, CmdCategoryDestructive, 1.0)

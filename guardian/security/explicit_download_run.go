@@ -26,15 +26,75 @@ type explicitDownloadRun struct {
 	bad   bool
 }
 
-func literalDownloadPath(value string) (string, bool) {
-	if value == "" || value == "-" || strings.ContainsAny(value, "$\x60*?{[~\\\x00<>") {
+// Cooked metacharacters can be literal when quoted or escaped. Consult the
+// original spelling instead of treating every cooked '$' or '*' as expansion.
+func literalDownloadPath(word shWord) (string, bool) {
+	if word.text == "" || word.text == "-" || !downloadWordIsLiteral(word) {
 		return "", false
 	}
-	return path.Clean(value), true
+	return path.Clean(word.text), true
 }
 
-func (s *explicitDownloadRun) matches(value string) bool {
-	file, ok := literalDownloadPath(value)
+func downloadWordIsLiteral(word shWord) bool {
+	if len(word.subs) > 0 || strings.ContainsRune(word.text, 0) {
+		return false
+	}
+	raw := word.rawSource
+	if raw == "" {
+		// A prefix retained by redirection stripping has no quote metadata.
+		return !strings.ContainsAny(word.text, "$\x60*?{[~\\<>")
+	}
+	var quote byte
+	ansi := false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if quote == '\'' {
+			if ansi && c == '\\' {
+				i++
+			} else if c == '\'' {
+				quote, ansi = 0, false
+			}
+			continue
+		}
+		if c == '\\' {
+			i++
+			continue
+		}
+		if c == '"' {
+			if quote == '"' {
+				quote = 0
+			} else {
+				quote = '"'
+			}
+			continue
+		}
+		if quote == 0 && c == '\'' {
+			quote = '\''
+			continue
+		}
+		if quote == 0 && c == '$' && i+1 < len(raw) && raw[i+1] == '\'' {
+			quote, ansi = '\'', true
+			i++
+			continue
+		}
+		if c == '$' && i+1 < len(raw) {
+			next := raw[i+1]
+			if next >= 128 || (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') ||
+				(next >= '0' && next <= '9') || next == '_' || strings.ContainsRune("{([?$#-!@*", rune(next)) ||
+				(quote == 0 && next == '"') {
+				return false
+			}
+		}
+		if c == '\x60' || (quote == 0 && strings.ContainsRune("*?{[<>", rune(c))) ||
+			(quote == 0 && c == '~' && (i == 0 || raw[i-1] == '=' || raw[i-1] == ':')) {
+			return false
+		}
+	}
+	return quote == 0
+}
+
+func (s *explicitDownloadRun) matches(word shWord) bool {
+	file, ok := literalDownloadPath(word)
 	return ok && s.files[file]
 }
 
@@ -62,7 +122,7 @@ func (s *explicitDownloadRun) words(words []shWord, depth int) {
 		return
 	}
 	name, args, _ := splitCommand(words)
-	if strings.ContainsAny(words[i].text, "/\\") && s.matches(words[i].text) {
+	if strings.Contains(words[i].text, "/") && s.matches(words[i]) {
 		s.bad = true
 	}
 	if strings.ContainsAny(words[i].text, "/\\") {
@@ -78,7 +138,7 @@ func (s *explicitDownloadRun) words(words []shWord, depth int) {
 	}
 	fileArgs := rsyncWithoutRedirects(args)
 	if name == "." || name == "source" {
-		if len(fileArgs) > 0 && s.matches(fileArgs[0].text) {
+		if len(fileArgs) > 0 && s.matches(fileArgs[0]) {
 			s.bad = true
 		}
 	} else if name == "sh" || name == "bash" || name == "dash" || name == "ksh" || name == "zsh" || name == "ash" {
@@ -105,26 +165,26 @@ func (s *explicitDownloadRun) words(words []shWord, depth int) {
 // Match only file-taking shell forms whose option semantics are known here.
 // Inline programs are opened by innerScripts; -s reads stdin. Other startup
 // files and shell-specific option forms remain outside this narrow boundary.
-func literalShellFile(name string, args []shWord) (string, bool) {
+func literalShellFile(name string, args []shWord) (shWord, bool) {
 	if shellSyntaxOnly(name, args) {
-		return "", false
+		return shWord{}, false
 	}
 	for i, arg := range args {
 		t := arg.text
 		if t == "--" {
 			if i+1 < len(args) {
-				return args[i+1].text, true
+				return args[i+1], true
 			}
-			return "", false
+			return shWord{}, false
 		}
 		if t == "" || (t[0] != '-' && t[0] != '+') {
-			return t, true
+			return arg, true
 		}
-		if (name != "bash" && strings.ContainsRune(t[1:], 'n')) || t == "-" || t == "+" || strings.HasPrefix(t, "--") || strings.Trim(t[1:], "efnuvxilpr") != "" {
-			return "", false
+		if t == "-" || t == "+" || strings.HasPrefix(t, "--") || strings.Trim(t[1:], "efnuvxilpr") != "" {
+			return shWord{}, false
 		}
 	}
-	return "", false
+	return shWord{}, false
 }
 
 var literalCurlFlags = strings.Fields("fail fail-with-body silent show-error location location-trusted insecure compressed globoff head ipv4 ipv6 http1.0 http1.1 http2 no-progress-meter")
@@ -136,9 +196,9 @@ var literalWgetValues = strings.Fields("output-file append-output directory-pref
 // value (for example curl -H '--output') as another option. Unsupported modes
 // return no proven outputs; their broader provenance remains tracked in #14.
 // Redirections stripped by the shared helper do not become option operands;
-// any remaining operator-bearing word is outside this literal grammar.
-func explicitFetchOutputs(name string, args []shWord) []string {
-	var files []string
+// unquoted residual redirection words are outside this literal grammar.
+func explicitFetchOutputs(name string, args []shWord) []shWord {
+	var files []shWord
 	flagOptions, valueOptions := literalCurlFlags, literalCurlValues
 	valueLetters, plainLetters, outputLetter := "HduAXxUebFTr", "fsSLqvIk", byte('o')
 	outputName := "output"
@@ -149,9 +209,6 @@ func explicitFetchOutputs(name string, args []shWord) []string {
 	}
 	for i := 0; i < len(args); i++ {
 		t := args[i].text
-		if strings.ContainsAny(t, "<>") {
-			return nil // unresolved operator-bearing words are outside this grammar
-		}
 		if t == "--" {
 			break
 		}
@@ -166,10 +223,9 @@ func explicitFetchOutputs(name string, args []shWord) []string {
 					}
 					value = args[i].text
 				}
-				if strings.ContainsAny(value, "<>") {
-					return nil
-				}
-				files = append(files, value)
+				word := args[i]
+				word.text = value
+				files = append(files, word)
 			case rsyncContains(valueOptions, key):
 				if !attached {
 					i++
@@ -193,7 +249,9 @@ func explicitFetchOutputs(name string, args []shWord) []string {
 						}
 						value = args[i].text
 					}
-					files = append(files, value)
+					word := args[i]
+					word.text = value
+					files = append(files, word)
 					j = len(t)
 				case strings.ContainsRune(valueLetters, rune(t[j])):
 					if j == len(t)-1 {

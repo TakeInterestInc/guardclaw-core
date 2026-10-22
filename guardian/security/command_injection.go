@@ -350,6 +350,27 @@ type CommandInjectionResult struct {
 
 // CheckCommandInjection analyzes input for command injection attempts.
 func CheckCommandInjection(input string) *CommandInjectionResult {
+	if matchExplicitDownloadRun(input) {
+		return explicitDownloadRunResult()
+	}
+	return checkCommandInjectionPatterns(input)
+}
+
+// CheckCommandInjectionNormalized retains normalized regex-evasion matching
+// while comparing literal filenames only in the original command spelling.
+func CheckCommandInjectionNormalized(input string) *CommandInjectionResult {
+	original := CheckCommandInjection(input)
+	if original.Detected {
+		return original
+	}
+	normalized := checkCommandInjectionPatterns(NormalizeInput(input))
+	if normalized.Detected || normalized.Score > original.Score {
+		return normalized
+	}
+	return original
+}
+
+func checkCommandInjectionPatterns(input string) *CommandInjectionResult {
 	result := &CommandInjectionResult{
 		Detected:   false,
 		Score:      0.0,
@@ -362,10 +383,6 @@ func CheckCommandInjection(input string) *CommandInjectionResult {
 	if matchRsyncDeletion(input) {
 		return rsyncDeletionResult()
 	}
-	if matchExplicitDownloadRun(input) {
-		return explicitDownloadRunResult()
-	}
-
 	var indicators []string
 
 	// Check for multiple suspicious characters

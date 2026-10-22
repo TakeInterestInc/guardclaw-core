@@ -182,9 +182,12 @@ exist, and neither replaces OS file permissions.
 `guardclaw-scan --stdin-command [--agent]`) also compare known explicit
 `curl -o/--output` and `wget -O/--output-document` outputs with later literal
 POSIX-shell file, source, and direct-path commands within the same input.
-They inspect strings without fetching or executing samples. Bash `-n`
-syntax checks and data files passed to a separate local program keep their
-ordinary behavior.
+They inspect strings without fetching or executing samples. Quoted or escaped
+literal filename characters retain their shell spelling; filename comparison
+runs only on the original input. `CheckCommandInjectionNormalized` and the CLI
+retain normalized regex matching separately. Supported Bash `-n` syntax checks
+and data files passed to a separate local program keep their ordinary behavior;
+other shells receive no syntax-only exemption.
 
 This is a bounded lexical candidate check, not proof of filesystem identity or
 complete download provenance. It uses the existing parser and known wrapper/
