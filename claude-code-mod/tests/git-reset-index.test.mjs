@@ -31,11 +31,22 @@ test('index and worktree reset modes require a human operation', () => {
 test('isolated native Git oracle demonstrates staged-content loss and soft preservation', t => {
   const root = mkdtempSync(join(tmpdir(), 'guardclaw-fixed-reset-oracle-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
+  const config = join(root, 'empty-gitconfig'); writeFileSync(config, '');
+  const templates = join(root, 'empty-templates'); mkdirSync(templates);
+  // Do not inherit GIT_DIR, GIT_WORK_TREE, alternate index/object paths,
+  // global config or user hooks that could redirect this fixture elsewhere.
+  const env = {
+    PATH: process.env.PATH ?? '/usr/bin:/bin',
+    ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+    HOME: root, XDG_CONFIG_HOME: root, GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: config, GIT_CONFIG_SYSTEM: config,
+    GIT_TEMPLATE_DIR: templates, GIT_TERMINAL_PROMPT: '0',
+  };
   // Every repository and byte below is a fixed test fixture, never user work.
   // Preserve fixed staged/unstaged bytes outside the repository before reset.
   for (const mode of ['--merge', '--mer', '--mixed', '--keep', '--soft']) {
     const cwd = join(root, mode.slice(2)); mkdirSync(cwd);
-    const git = (...args) => execFileSync('git', ['-c', 'user.name=Fixed Fixture', '-c', 'user.email=fixture@example.invalid', ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const git = (...args) => execFileSync('git', ['-c', 'user.name=Fixed Fixture', '-c', 'user.email=fixture@example.invalid', ...args], { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     const file = join(cwd, 'tracked.txt');
     git('init', '-q'); writeFileSync(file, 'fixed base\n'); git('add', 'tracked.txt'); git('commit', '-qm', 'fixed base');
     writeFileSync(file, 'fixed unique staged\n'); git('add', 'tracked.txt');
