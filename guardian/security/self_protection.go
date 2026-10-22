@@ -102,6 +102,7 @@ func MatchSelfProtection(cmd string) (string, bool) {
 type shWord struct {
 	text       string    // unquoted, unescaped text; a substitution keeps its source
 	subs       [][]shCmd // command substitutions inside the word
+	rawSource  string    // original spelling, used to distinguish literal operators from redirections
 	ansiQuoted bool      // command names retain their unevaluable-encoding marker
 }
 
@@ -128,10 +129,11 @@ func (p *shParser) parseList(term byte) []shCmd {
 		inWord     bool
 		ansiQuoted bool
 		parens     int
+		wordStart  int
 	)
 	endWord := func() {
 		if inWord {
-			cur.words = append(cur.words, shWord{text: w.String(), subs: subs, ansiQuoted: ansiQuoted})
+			cur.words = append(cur.words, shWord{text: w.String(), subs: subs, ansiQuoted: ansiQuoted, rawSource: p.s[wordStart:p.i]})
 			w.Reset()
 			subs = nil
 			inWord = false
@@ -147,6 +149,9 @@ func (p *shParser) parseList(term byte) []shCmd {
 		cur = shCmd{}
 	}
 	for p.i < len(p.s) {
+		if !inWord {
+			wordStart = p.i
+		}
 		c := p.s[p.i]
 		if term != 0 && c == term && (term != ')' || parens == 0) {
 			p.i++

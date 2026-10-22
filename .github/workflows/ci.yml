@@ -13,6 +13,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  mod-rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Pure mod boundary tests (runner Node 22.18+)
+        run: |
+          node --version
+          node --test claude-code-mod/tests/*.test.mjs
+          npm test
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
