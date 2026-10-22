@@ -182,7 +182,7 @@ exist, and neither replaces OS file permissions.
 `guardclaw-scan --stdin-command [--agent]`) also compare known explicit
 `curl -o/--output` and `wget -O/--output-document` outputs with later literal
 POSIX-shell file, source, and direct-path commands within the same input.
-They inspect strings without fetching or executing samples. Shell `-n`
+They inspect strings without fetching or executing samples. Bash `-n`
 syntax checks and data files passed to a separate local program keep their
 ordinary behavior.
 

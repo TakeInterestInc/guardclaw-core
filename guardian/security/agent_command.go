@@ -257,13 +257,14 @@ func visitWords(words []shWord, depth int, fn func(name string, args []shWord)) 
 	}
 }
 
-// shellSyntaxOnly recognizes leading no-execute options before the script
-// operand or -c program. Do not inspect that program as more shell options.
+// shellSyntaxOnly recognizes Bash startup no-execute options backed by the
+// native fixed-printf oracle. Stop at the script operand or -c program; that
+// program and its positional arguments are not more shell options.
 func shellSyntaxOnly(name string, args []shWord) bool {
-	if !agentShells[name] {
-		return false
+	if name != "bash" {
+		return false // other shells need their own native option oracle
 	}
-	noexec, interactive := false, false
+	noexec := false
 	for i := 0; i < len(args); i++ {
 		t := args[i].text
 		if t == "--" || t == "-" || len(t) < 2 || (t[0] != '-' && t[0] != '+') {
@@ -301,14 +302,11 @@ func shellSyntaxOnly(name string, args []shWord) bool {
 		if strings.ContainsRune(t[1:], 'n') {
 			noexec = t[0] == '-'
 		}
-		if strings.ContainsRune(t[1:], 'i') {
-			interactive = t[0] == '-'
-		}
 		if strings.ContainsRune(t[1:], 'c') {
 			break
 		}
 	}
-	return noexec && !interactive // shells ignore -n in interactive mode
+	return noexec
 }
 
 // innerScripts are the strings a command runs as shell code.

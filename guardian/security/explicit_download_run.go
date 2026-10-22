@@ -120,7 +120,7 @@ func literalShellFile(name string, args []shWord) (string, bool) {
 		if t == "" || (t[0] != '-' && t[0] != '+') {
 			return t, true
 		}
-		if t == "-" || t == "+" || strings.HasPrefix(t, "--") || strings.Trim(t[1:], "efnuvxilpr") != "" {
+		if (name != "bash" && strings.ContainsRune(t[1:], 'n')) || t == "-" || t == "+" || strings.HasPrefix(t, "--") || strings.Trim(t[1:], "efnuvxilpr") != "" {
 			return "", false
 		}
 	}
