@@ -164,7 +164,11 @@ forms) can discard a distinct staged snapshot, so they require a human
 operation. Only a literal `git reset --soft [commit]` with optional `-q`/`--quiet`
 passes this reset rule; unknown/abbreviated options and expanded operands are
 refused. This preserves index/worktree content, not an assurance about changing
-branch history. Degraded mode retains its existing refusal of all reset commands.
+branch history. A bounded Git global-option reader consumes known operands,
+including separate/attached `--config-env`, before selecting the subcommand;
+unresolved global grammar is refused instead of hiding a destructive command.
+This does not attest local Git aliases, configuration or hooks as trustworthy.
+Degraded mode retains its existing refusal of all reset commands.
 `git checkout` is ambiguous between branch switching and path restoration, so
 use `git switch <branch>` for a normal branch transition. Run an intentional
 discard, restoration or forced deletion yourself outside the agent. The mod has

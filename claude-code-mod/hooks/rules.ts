@@ -203,6 +203,37 @@ function npxRefusal(args: string[]): string | undefined {
   return undefined
 }
 
+// Resolve only documented literal Git global-option shapes before selecting
+// the subcommand. An unresolved option/operand must not hide a destructive
+// command by being mistaken for the command name.
+const GIT_GLOBAL_VALUES = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env'])
+const GIT_GLOBAL_FLAGS = new Set(['-p', '--paginate', '-P', '--no-pager', '--bare', '--no-replace-objects', '--no-lazy-fetch', '--no-optional-locks', '--no-advice', '--literal-pathspecs', '--glob-pathspecs', '--noglob-pathspecs', '--icase-pathspecs'])
+const GIT_GLOBAL_INFO = new Set(['-v', '--version', '-h', '--help', '--html-path', '--man-path', '--info-path', '--exec-path'])
+function gitInvocation(args: string[]): { sub: string; args: string[] } | undefined {
+  let i = 0
+  for (; i < args.length; i++) {
+    const arg = args[i] ?? ''
+    if (/[$`*?{[]/.test(arg)) return undefined
+    if (arg === '--') { i++; break }
+    if (!arg.startsWith('-') || arg === '-') break
+    if (GIT_GLOBAL_VALUES.has(arg)) {
+      const value = args[++i]
+      if (value === undefined || /[$`*?{[]/.test(value)) return undefined
+    } else if (arg.startsWith('-C') || arg.startsWith('-c')) {
+      // These two short global options accept an attached operand.
+      if (arg.length <= 2) return undefined
+    } else if (arg.includes('=')) {
+      const key = arg.slice(0, arg.indexOf('='))
+      if (!GIT_GLOBAL_VALUES.has(key) && key !== '--exec-path') return undefined
+    } else if (GIT_GLOBAL_INFO.has(arg)) {
+      return { sub: '', args: [] } // informational global modes exit before a subcommand
+    } else if (!GIT_GLOBAL_FLAGS.has(arg)) return undefined
+  }
+  const sub = args[i] ?? ''
+  if (/[$`*?{[]/.test(sub)) return undefined
+  return { sub, args: args.slice(i + 1) }
+}
+
 // Every index-reset form can discard a distinct staged snapshot, including
 // default/mixed/keep and pathspec/patch forms. Permit only an explicit literal
 // soft reset with at most one commit operand; it leaves index/worktree intact.
@@ -340,12 +371,9 @@ function commandAdmission(command: string, home?: string): Verdict | undefined {
       if (output.length && (w.some(a => /^-C/.test(a)) || /(?:^|[\s;&|()])(?:cd|pushd|popd|chroot)\b/.test(normalize(command)) || /[$`*?{[]/.test(segment) || output.some(p => p.split('/').includes('..')))) return { rule: 'ambiguous_mutation', reason: 'Go output with unresolved directory or expansion' }
     }
     if (head === 'git') {
-      let i = 0
-      while ((args[i] ?? '').startsWith('-')) {
-        const flag = args[i++] ?? ''
-        if (['-C', '-c', '--git-dir', '--work-tree', '--namespace'].includes(flag)) i++
-      }
-      const sub = args[i] ?? '', flags = args.slice(i + 1)
+      const git = gitInvocation(args)
+      if (!git) return { rule: 'git_discard_work', reason: 'unresolved Git global options cannot prove the command preserves work' }
+      const sub = git.sub, flags = git.args
       const force = flags.includes('--force') || flags.some(a => /^-[^-]*f/.test(a))
       if (sub === 'restore' || sub === 'checkout' || (sub === 'switch' && (force || flags.includes('--discard-changes') || flags.some(a => a === '--force-create' || a.startsWith('--force-create=') || /^-[^-]*C/.test(a)))) || (sub === 'branch' && (force || flags.some(a => /^-[^-]*D/.test(a)))) || (sub === 'reset' && gitResetChangesIndex(flags)) || (sub === 'clean' && force) || (sub === 'stash' && ['drop', 'clear'].includes(flags[0] ?? ''))) {
         return { rule: 'git_discard_work', reason: 'discarding work or forcing branch deletion requires an explicit human operation' }
